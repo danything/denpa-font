@@ -26,9 +26,10 @@ pub const MIN_ADVANCE: i32 = 320;
 /// palt を引ける用字系 (タグの順)。用字系の無い記号は前後の字の用字系になるので、和文の中でも効くようにする
 const SCRIPTS: [&[u8; 4]; 4] = [b"DFLT", b"hani", b"kana", b"latn"];
 
-/// 1 字の詰め (xPlacement, xAdvance)。墨は新しい送り幅の真ん中に置く。詰めなくてよい (詰めると全角より広い) なら None
+/// 1 字の詰め (xPlacement, xAdvance)。墨は新しい送り幅の真ん中に置く。
+/// 詰めない (詰めても全角に届く・墨が無い・全角でない) なら None
 pub fn adjust(x_min: i32, x_max: i32, advance: i32) -> Option<(i16, i16)> {
-    if advance != FULL || x_max < x_min {
+    if advance != FULL || x_max <= x_min {
         return None;
     }
     let ink = x_max - x_min;
@@ -46,10 +47,8 @@ pub fn gpos(glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>) -> Result<Option<Gpos>> 
     for c in RANGE {
         let Some(&g) = cmap.get(&c) else { continue };
         let d = &glyphs.data[g as usize];
-        if d.is_empty() {
-            continue;
-        }
-        let (x0, x1) = (i16_at(d, 2) as i32, i16_at(d, 6) as i32);
+        // 形の無い字 (空白) は墨の枠も無い
+        let (x0, x1) = if d.is_empty() { (0, 0) } else { (i16_at(d, 2) as i32, i16_at(d, 6) as i32) };
         if let Some(a) = adjust(x0, x1, glyphs.advance[g as usize] as i32) {
             adj.insert(u16::try_from(g).map_err(|_| format!("字の番号 {g} が大き過ぎます"))?, a);
         }
@@ -57,7 +56,7 @@ pub fn gpos(glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>) -> Result<Option<Gpos>> 
     if adj.is_empty() {
         return Ok(None);
     }
-    // 詰めは字ごとなので、同じ字を使うほかの Unicode (parts.txt の ->) にも効く。そういう字は今は無い
+    // 詰めは字ごとなので、同じ字を使うほかの Unicode (parts.txt の -> など) にも効いてしまう。そういう字があれば止める
     let shared: Vec<String> = cmap
         .iter()
         .filter(|&(c, g)| !RANGE.contains(c) && u16::try_from(*g).is_ok_and(|g| adj.contains_key(&g)))
@@ -113,5 +112,6 @@ mod tests {
         assert_eq!(adjust(21, 1003, FULL), None);
         assert_eq!(adjust(49, 975, FULL), None);
         assert_eq!(adjust(100, 400, 512), None);
+        assert_eq!(adjust(0, 0, FULL), None);
     }
 }

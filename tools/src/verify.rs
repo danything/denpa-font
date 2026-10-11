@@ -290,12 +290,14 @@ fn read_palt(font: &FontRef, errors: &mut Vec<String>) -> Result<(BTreeMap<Glyph
     let mut unreachable = vec![];
     for rec in scripts.script_records() {
         let script = rec.script(scripts.offset_data())?;
-        let ok = script
-            .default_lang_sys()
-            .transpose()?
-            .is_some_and(|ls| ls.feature_indices().iter().any(|i| palt.contains(&i.get())));
-        if !ok {
+        let has = |ls: &skrifa::raw::tables::layout::LangSys| ls.feature_indices().iter().any(|i| palt.contains(&i.get()));
+        if !script.default_lang_sys().transpose()?.is_some_and(|ls| has(&ls)) {
             unreachable.push(rec.script_tag().to_string());
+        }
+        for l in script.lang_sys_records() {
+            if !has(&l.lang_sys(script.offset_data())?) {
+                unreachable.push(format!("{}/{}", rec.script_tag(), l.lang_sys_tag()));
+            }
         }
     }
     if scripts.script_records().iter().all(|r| r.script_tag() != skrifa::Tag::new(b"DFLT")) {
@@ -321,13 +323,18 @@ fn check_palt(font: &FontRef, cmap: &BTreeMap<u32, GlyphId>, errors: &mut Vec<St
         if adv(g) != crate::palt::FULL || half.is_some_and(|a| a != crate::palt::FULL / 2) {
             odd.insert(c);
         }
-        let Some(b) = metrics.bounds(g).filter(|b| b.x_max > b.x_min) else { continue };
+        let Some(b) = metrics.bounds(g) else { continue };
         if let Some((p, a)) = crate::palt::adjust(b.x_min as i32, b.x_max as i32, adv(g)) {
             want.insert(g, (p as i32, a as i32));
-            // 詰めたあとも墨が送り幅の中に収まり、真ん中にあること
-            let (l, r) = (b.x_min as i32 + p as i32, adv(g) + a as i32 - (b.x_max as i32 + p as i32));
-            if l < 0 || r < 0 || (l - r).abs() > 1 {
-                errors.push(format!("palt で U+{c:04X} の墨が真ん中に収まらない (左 {l}・右 {r})"));
+        }
+        // 式 (palt::adjust) とは別に、フォントにある詰めが: 送り幅を下限から全角の間にし、
+        // 墨を真ん中に置いて左右に SIDE 以上残すこと
+        if let Some(&(p, a)) = got.get(&g) {
+            let w = adv(g) + a;
+            let (l, r) = (b.x_min as i32 + p, w - (b.x_max as i32 + p));
+            let side = crate::palt::SIDE;
+            if !(crate::palt::MIN_ADVANCE..crate::palt::FULL).contains(&w) || l < side || r < side || (l - r).abs() > 1 {
+                errors.push(format!("palt で U+{c:04X} の詰め方がおかしい (送り幅 {w}・左 {l}・右 {r})"));
             }
         }
     }
@@ -350,7 +357,7 @@ fn check_palt(font: &FontRef, cmap: &BTreeMap<u32, GlyphId>, errors: &mut Vec<St
     if !diff.is_empty() {
         errors.push(format!("palt の詰めが墨の幅から決めた量と違う字: {}", label(&diff)));
     }
-    let width: Vec<i32> = want.values().map(|&(_, a)| crate::palt::FULL + a).collect();
+    let width: Vec<i32> = got.values().map(|&(_, a)| crate::palt::FULL + a).collect();
     println!(
         "palt: {} 字を詰める (送り幅 {}〜{})",
         got.len(),
