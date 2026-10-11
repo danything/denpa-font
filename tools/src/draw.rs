@@ -626,6 +626,16 @@ pub fn draw(c: u32, base: &Base) -> Result<Option<Shape>> {
             s.extend(capsule((a.0 + 70.0, a.1 - 80.0), (z.0 - 70.0, z.1 + 80.0), LINE * 1.6));
         }
 
+        // ---- 字幕の外字 (DRCS) の置き換え先
+        0x1F4F1 => {
+            // 📱 携帯電話: 黒い縦長の本体に、白く抜いた画面・受話口・ボタン (☎ と同じく黒い塗り)
+            let (x0, x1) = (290.0, 734.0);
+            s = rrect(x0, -30.0, x1, 820.0, 90.0);
+            s.extend(reverse(rrect(x0 + LINE, 190.0, x1 - LINE, 680.0, 20.0)));
+            s.extend(reverse(capsule((CX - 60.0, 755.0), (CX + 60.0, 755.0), 34.0)));
+            s.extend(reverse(circle(CX, 90.0, 42.0)));
+        }
+
         _ => return Ok(None),
     }
     Ok(Some(s))
