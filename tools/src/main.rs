@@ -11,6 +11,7 @@ mod err;
 mod fillet;
 mod fit;
 mod make;
+mod palt;
 mod parts;
 mod repertoire;
 mod round;
@@ -303,10 +304,15 @@ fn build(version: &str) -> Result<()> {
 }
 
 /// 表を組む。元の表から運ぶのは OS/2・post・head・hhea の値だけ (em を半分にした分を直す)。
-/// ヒンティングは持たない (fpgm・prep・cvt・gasp を作らない)。縦書きと OpenType の組版の表も持たない
+/// ヒンティングは持たない (fpgm・prep・cvt・gasp を作らない)。縦書きの表と GSUB は持たない。
+/// GPOS は palt (全角の英数字と記号を詰める) だけ (palt.rs)
 fn tables(base: &FontRef, glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>, major: u16, minor: u16, epoch: i64) -> Result<Vec<u8>> {
     let half = |v: i16| ((v as f64) / 2.0).round() as i16;
     let mut b = write_fonts::FontBuilder::new();
+    let gpos = palt::gpos(glyphs, cmap)?;
+    if let Some(g) = &gpos {
+        b.add_table(g)?;
+    }
     let (glyf, loca, hmtx) = glyphs.tables();
     b.add_raw(Tag::new(b"glyf"), glyf);
     b.add_raw(Tag::new(b"loca"), loca);
@@ -385,7 +391,7 @@ fn tables(base: &FontRef, glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>, major: u16
     let (first, last) = (cmap.keys().next().copied().unwrap_or(0), cmap.keys().last().copied().unwrap_or(0));
     put_u16(&mut os2, 64, first.min(0xFFFF) as u16);
     put_u16(&mut os2, 66, last.min(0xFFFF) as u16);
-    put_u16(&mut os2, 94, 0); // usMaxContext (組版の表は持たない)
+    put_u16(&mut os2, 94, u16::from(gpos.is_some())); // usMaxContext (palt は 1 字ずつ)
     b.add_raw(Tag::new(b"OS/2"), os2);
 
     let mut post = sfnt::table(base, b"post")?[..32].to_vec();

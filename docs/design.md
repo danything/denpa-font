@@ -41,9 +41,20 @@ BIZ UDゴシック (em 2048 を半分の 1024 にして使う) の字は、輪�
 
 ![半角から全角にした字の拡大](v3/zoom-width.png)
 
+## palt (全角の英数字を詰める)
+
+番組名・番組説明を表示するときに、放送のデータでは全角のままの英数字を詰めるための OpenType の機能です。
+クライアントが有効にしたときだけ効きます (CSS は `font-feature-settings: "palt"`、Android は `fontFeatureSettings`)。字幕・データ放送では使いません。
+
+- 詰めるのは全角の英数字と記号 (U+FF01–FF5E、Ａ ａ ０ ！ （ ． ／ など) だけ。かな・漢字・和文の約物 (「」、。・ 全角の空白など) は詰めない
+- 詰め量はビルドのたびに出来た字の墨の枠から出す ([palt.rs](../tools/src/palt.rs))。墨の左右に 80 ずつ残し (字の間は 160)、墨を真ん中に置く。送り幅の下限は 320 (ｉ ． ： ｜ など細い字)
+- 墨と余白で全角に届く字 (墨の幅が 864 以上の Ｗ ％ ／ ＼ ＿) は全角のまま
+- 既定の送り幅 (hmtx) は変えない。palt を使わなければ見え方は前と同じ
+- DFLT・hani・kana・latn のどれからも引ける (記号は前後の字の用字系になるので、和文に挟まれても効く)
+
 ## ヒンティングを持たない理由
 
 字幕・データ放送を描くところは、どれも TrueType の命令を使いません。
 Android (Android TV・denpa-tv) と Linux の Chrome は FreeType の自動ヒンティング (light) で縦だけ合わせ、macOS・iOS はヒンティングをせず、
 Windows のブラウザ (DirectWrite) もヒンティングの無いフォントをなめらかに描きます。字幕は 1 字 20px より大きいので、命令が無くても線は潰れません。
-ttfautohint などの道具も増やしません。縦書きと OpenType の組版 (vhea/vmtx/GSUB/GPOS) も持ちません。
+ttfautohint などの道具も増やしません。縦書きと OpenType の組版 (vhea/vmtx/GSUB) も持ちません。GPOS は下の palt だけです。

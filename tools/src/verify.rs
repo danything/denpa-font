@@ -1,6 +1,6 @@
 //! 出来たフォントを確かめる。どれかに引っかかったら終了コード 1。
 //!
-//! 止めるのは機械で決まるものだけ (1・2・4)。3 は一覧と見本を出すだけで、変わってよいかは PR を見る人が決める。
+//! 止めるのは機械で決まるものだけ (1・2・4・5)。3 は一覧と見本を出すだけで、変わってよいかは PR を見る人が決める。
 //!
 //! 1. 字の揃い: denpa の表から作った字 (build/repertoire.txt) が全部あり (missing.txt の字を除く)、空白のほかは形があること
 //!    (カラー絵文字が既定の字も白黒の形を持つ)。missing.txt の字が入ったら missing.txt から消す。送り幅は半角 512 か全角 1024
@@ -8,7 +8,9 @@
 //! 3. 前の版と比べて描き方が変わった字: ヒンティング無し・フォント自身のヒンティング (TrueType の命令)・
 //!    自動ヒンティング (FreeType の light 相当) で描いた輪郭 (24・36px) と送り幅で比べ、
 //!    一覧を出し、前と今の字形を並べた見本 (build/changes.svg) を書く (止めない)
-//! 4. woff2 を解いたもの (CI が woff2_decompress で解く) が ttf と同じ字になること
+//! 4. woff2 を解いたもの (CI が woff2_decompress で解く) が ttf と同じ字・同じ GPOS になること
+//! 5. palt: 全角の英数字と記号 (U+FF01–FF5E) だけを墨の幅から決めた量で詰め、どの用字系からも引けること。
+//!    その字の既定の送り幅は全角 1024 (半角の同じ字は 512) のまま
 
 use crate::read_codepoints;
 use crate::err::Result;
@@ -219,7 +221,16 @@ pub fn run(font_path: &Path, prev_path: Option<&Path>, woff2_ttf: Option<&Path>)
             errors.push(format!("woff2 を解くと違う字 {}: {}", d.len(), label(&d)));
         }
         println!("woff2: 解いて {} 字を比べて違い {}", cps.len(), d.len());
+        let gpos = |d: &[u8]| -> Result<Option<Vec<u8>>> {
+            Ok(FontRef::new(d)?.table_data(skrifa::Tag::new(b"GPOS")).map(|t| t.as_bytes().to_vec()))
+        };
+        if gpos(&data)? != gpos(&back)? {
+            errors.push("woff2 を解くと GPOS が違う".into());
+        }
     }
+
+    // 5. palt
+    check_palt(&font, &cmap, &mut errors)?;
 
     for e in &errors {
         println!("NG: {e}");
@@ -227,6 +238,132 @@ pub fn run(font_path: &Path, prev_path: Option<&Path>, woff2_ttf: Option<&Path>)
     if !errors.is_empty() {
         std::process::exit(1);
     }
+    Ok(())
+}
+
+/// GPOS の palt の詰め (字 → (xPlacement, xAdvance)) と、palt を引けない用字系。palt のほかの機能があれば errors に足す
+fn read_palt(font: &FontRef, errors: &mut Vec<String>) -> Result<(BTreeMap<GlyphId, (i32, i32)>, Vec<String>)> {
+    use skrifa::raw::tables::gpos::{PositionLookup, SinglePos};
+    let mut out = BTreeMap::new();
+    let Ok(gpos) = font.gpos() else {
+        errors.push("GPOS が無い (palt が無い)".into());
+        return Ok((out, vec![]));
+    };
+    let features = gpos.feature_list()?;
+    let lookups = gpos.lookup_list()?;
+    let mut palt = BTreeSet::new();
+    for (i, rec) in features.feature_records().iter().enumerate() {
+        let tag = rec.feature_tag();
+        if tag != skrifa::Tag::new(b"palt") {
+            errors.push(format!("GPOS に palt のほかの機能がある: {tag}"));
+            continue;
+        }
+        palt.insert(i as u16);
+        for li in rec.feature(features.offset_data())?.lookup_list_indices() {
+            match lookups.lookups().get(li.get() as usize)? {
+                PositionLookup::Single(l) => {
+                    for st in l.subtables().iter() {
+                        let mut put = |g: skrifa::raw::types::GlyphId16, v: skrifa::raw::tables::gpos::ValueRecord| {
+                            if v.y_placement().unwrap_or(0) != 0 || v.y_advance().unwrap_or(0) != 0 {
+                                errors.push(format!("palt で glyph {g} が縦に動く"));
+                            }
+                            let a = (v.x_placement().unwrap_or(0) as i32, v.x_advance().unwrap_or(0) as i32);
+                            if out.insert(GlyphId::from(g), a).is_some() {
+                                errors.push(format!("palt で glyph {g} を 2 度動かす"));
+                            }
+                        };
+                        match st? {
+                            SinglePos::Format1(t) => t.coverage()?.iter().for_each(|g| put(g, t.value_record())),
+                            SinglePos::Format2(t) => {
+                                for (g, v) in t.coverage()?.iter().zip(t.value_records().iter()) {
+                                    put(g, v?);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => errors.push(format!("palt の lookup {} が 1 字ずつの位置合わせ (SinglePos) でない", li.get())),
+            }
+        }
+    }
+    let scripts = gpos.script_list()?;
+    let mut unreachable = vec![];
+    for rec in scripts.script_records() {
+        let script = rec.script(scripts.offset_data())?;
+        let has = |ls: &skrifa::raw::tables::layout::LangSys| ls.feature_indices().iter().any(|i| palt.contains(&i.get()));
+        if !script.default_lang_sys().transpose()?.is_some_and(|ls| has(&ls)) {
+            unreachable.push(rec.script_tag().to_string());
+        }
+        for l in script.lang_sys_records() {
+            if !has(&l.lang_sys(script.offset_data())?) {
+                unreachable.push(format!("{}/{}", rec.script_tag(), l.lang_sys_tag()));
+            }
+        }
+    }
+    if scripts.script_records().iter().all(|r| r.script_tag() != skrifa::Tag::new(b"DFLT")) {
+        unreachable.push("DFLT (無い)".into());
+    }
+    Ok((out, unreachable))
+}
+
+/// palt: 全角の英数字と記号 (palt::RANGE) だけを、墨の幅から決めた量 (palt::adjust) で詰めること。
+/// 既定の送り幅 (hmtx) は全角 1024・半角 512 のまま (palt を使わない字幕・データ放送の見え方を変えない)
+fn check_palt(font: &FontRef, cmap: &BTreeMap<u32, GlyphId>, errors: &mut Vec<String>) -> Result<()> {
+    let (got, unreachable) = read_palt(font, errors)?;
+    if !unreachable.is_empty() {
+        errors.push(format!("palt を引けない用字系: {}", unreachable.join(" ")));
+    }
+    let metrics = font.glyph_metrics(Size::unscaled(), LocationRef::default());
+    let adv = |g: GlyphId| metrics.advance_width(g).unwrap_or(0.0) as i32;
+    let mut want = BTreeMap::new();
+    let mut odd = BTreeSet::new();
+    for c in crate::palt::RANGE {
+        let Some(&g) = cmap.get(&c) else { continue };
+        let half = cmap.get(&(c - 0xFEE0)).map(|&h| adv(h));
+        if adv(g) != crate::palt::FULL || half.is_some_and(|a| a != crate::palt::FULL / 2) {
+            odd.insert(c);
+        }
+        let Some(b) = metrics.bounds(g) else { continue };
+        if let Some((p, a)) = crate::palt::adjust(b.x_min as i32, b.x_max as i32, adv(g)) {
+            want.insert(g, (p as i32, a as i32));
+        }
+        // 式 (palt::adjust) とは別に、フォントにある詰めが: 送り幅を下限から全角の間にし、
+        // 墨を真ん中に置いて左右に SIDE 以上残すこと
+        if let Some(&(p, a)) = got.get(&g) {
+            let w = adv(g) + a;
+            let (l, r) = (b.x_min as i32 + p, w - (b.x_max as i32 + p));
+            let side = crate::palt::SIDE;
+            if !(crate::palt::MIN_ADVANCE..crate::palt::FULL).contains(&w) || l < side || r < side || (l - r).abs() > 1 {
+                errors.push(format!("palt で U+{c:04X} の詰め方がおかしい (送り幅 {w}・左 {l}・右 {r})"));
+            }
+        }
+    }
+    if !odd.is_empty() {
+        errors.push(format!("既定の送り幅が全角 1024 (半角の字は 512) でない字: {}", label(&odd)));
+    }
+    let extra: BTreeSet<u32> = cmap.iter().filter(|&(c, g)| got.contains_key(g) && !crate::palt::RANGE.contains(c)).map(|(&c, _)| c).collect();
+    if !extra.is_empty() {
+        errors.push(format!("palt で全角の英数字と記号のほかの字も詰める: {}", label(&extra)));
+    }
+    let unmapped = got.keys().filter(|g| !cmap.values().any(|v| v == *g)).count();
+    if unmapped > 0 {
+        errors.push(format!("palt で Unicode の割り当ての無い字を {unmapped} 字詰める"));
+    }
+    let diff: BTreeSet<u32> = cmap
+        .iter()
+        .filter(|&(c, g)| crate::palt::RANGE.contains(c) && got.get(g) != want.get(g))
+        .map(|(&c, _)| c)
+        .collect();
+    if !diff.is_empty() {
+        errors.push(format!("palt の詰めが墨の幅から決めた量と違う字: {}", label(&diff)));
+    }
+    let width: Vec<i32> = got.values().map(|&(_, a)| crate::palt::FULL + a).collect();
+    println!(
+        "palt: {} 字を詰める (送り幅 {}〜{})",
+        got.len(),
+        width.iter().min().unwrap_or(&0),
+        width.iter().max().unwrap_or(&0)
+    );
     Ok(())
 }
 

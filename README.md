@@ -4,7 +4,7 @@
 BIZ UDゴシック (モリサワ) の角を機械で丸め、元に無い ARIB の記号などは BIZ UDゴシックの部品で描き足しています。
 
 - ファミリ名 `Denpa Font` (PostScript 名 `DenpaFont-Regular`)、em 1024、送り幅は半角 512・全角 1024 だけ
-- 収める字は [danything/denpa](https://github.com/danything/denpa) の表から決め、全部入っています (v3.0 で 7,755 字)。縦書き・ヒンティングは持ちません
+- 収める字は [danything/denpa](https://github.com/danything/denpa) の表から決め、全部入っています (v3.0 で 7,755 字)。縦書き・ヒンティングは持ちません。全角の英数字を詰める palt を持ちます ([docs/design.md](docs/design.md#palt-全角の英数字を詰める))
 
 ## 入手
 
