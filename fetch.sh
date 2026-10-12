@@ -1,6 +1,6 @@
 #!/bin/sh
 # 道具 (tools/) が読むものを build/src に取ってきて確かめる。道具はネットにも書庫にも触らない。
-#   要るもの: curl・sha256sum・openssl・base64・tar (GitHub の ubuntu ランナーには入っている)
+#   要るもの: curl・sha256sum (GitHub の ubuntu ランナーには入っている)
 set -eu
 cd "$(dirname "$0")"
 S=build/src
@@ -9,7 +9,8 @@ mkdir -p "$S/denpa"
 # 字の一覧を作る denpa の表の版 (Renovate が追う)
 # renovate: datasource=git-refs depName=https://github.com/danything/denpa branch=main
 DENPA_COMMIT=b8847cc33e9e9efb0b1a5c72e4e4940a0bd22d84
-# EUC-JP の表 (WHATWG Encoding Standard の index-jis0208。ブラウザの TextDecoder と同じ字)
+# EUC-JP の表 (WHATWG Encoding Standard の index-jis0208。ブラウザの TextDecoder と同じ字。
+# 字幕の漢字 (EUC-JP との差分) と、denpa のデータ放送のエンジン (TextDecoder('euc-jp') で読む) の 1〜84 区)
 # renovate: datasource=git-refs depName=https://github.com/whatwg/encoding branch=main
 WHATWG_ENCODING_COMMIT=a985b62a9b45c17da3e17a9f0a0b4e30c34c4a8a
 # BIZ UDゴシック Regular (googlefonts/morisawa-biz-ud-gothic の GitHub リリース。OFL 1.1)。
@@ -44,25 +45,14 @@ done
 # denpa の表 (無いファイルは飛ばす。表はいずれ 1 つのファイルにまとまる)
 if [ "$(cat "$S/denpa/COMMIT" 2>/dev/null)" != "$DENPA_COMMIT" ]; then
   rm -f "$S"/denpa/*
-  for f in src/lib/ts/b24-tables.ts src/lib/ts/aribtext-gaiji.ts src/lib/fold.ts package.json bun.lock; do
+  for f in src/lib/ts/b24-tables.ts src/lib/ts/aribtext-gaiji.ts src/lib/fold.ts; do
     get "https://raw.githubusercontent.com/danything/denpa/$DENPA_COMMIT/$f" "$S/denpa/$(basename "$f")" || echo "denpa に $f はありません"
   done
   echo "$DENPA_COMMIT" > "$S/denpa/COMMIT"
 fi
 
-# データ放送の表: denpa の package.json の web-bml の版を npm から取り、bun.lock の sha512 で確かめる
-ver=$(sed -n 's/.*"web-bml": *"[~^]*\([0-9][0-9.]*\)".*/\1/p' "$S/denpa/package.json" | head -1)
-[ -n "$ver" ] || { echo "denpa の package.json に web-bml がありません" >&2; exit 1; }
-tgz="$S/web-bml-$ver.tgz"
-want=$(grep -F "\"web-bml@$ver\"" "$S/denpa/bun.lock" | sed -n 's/.*"sha512-\([^"]*\)".*/\1/p' | head -1)
-[ -n "$want" ] || { echo "denpa の bun.lock に web-bml@$ver の sha512 がありません" >&2; exit 1; }
-sum() { openssl dgst -sha512 -binary "$1" | base64 -w0; }
-[ -f "$tgz" ] && [ "$(sum "$tgz")" = "$want" ] || get "https://registry.npmjs.org/web-bml/-/web-bml-$ver.tgz" "$tgz"
-[ "$(sum "$tgz")" = "$want" ] || { echo "web-bml-$ver.tgz の sha512 が denpa の bun.lock と違います" >&2; exit 1; }
-tar -xzf "$tgz" -O package/dist/client/jis_to_unicode_map.js > "$S/jis_to_unicode_map.js"
-
 # EUC-JP の表
 [ -s "$S/index-jis0208.txt" ] && grep -q "$WHATWG_ENCODING_COMMIT" "$S/index-jis0208.commit" 2>/dev/null ||
   { get "https://raw.githubusercontent.com/whatwg/encoding/$WHATWG_ENCODING_COMMIT/index-jis0208.txt" "$S/index-jis0208.txt" &&
     echo "$WHATWG_ENCODING_COMMIT" > "$S/index-jis0208.commit"; }
-echo "取ってきた: BIZ UDゴシック $BIZ_VERSION、denpa $DENPA_COMMIT、web-bml $ver、index-jis0208 $WHATWG_ENCODING_COMMIT"
+echo "取ってきた: BIZ UDゴシック $BIZ_VERSION、denpa $DENPA_COMMIT、index-jis0208 $WHATWG_ENCODING_COMMIT"
