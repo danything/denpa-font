@@ -134,14 +134,17 @@ fn js_value(s: &str) -> Result<(Val, &str)> {
     }
 }
 
-/// `export const NAME[: 型] = <値>` の <値> の文字列 (先頭から)
+/// `[export ]const NAME[: 型] = <値>` の <値> の文字列 (先頭から)。
+/// denpa はファイルの中でしか使わない表の export を外すので、export の有無は問わない
 fn raw_value<'a>(src: &'a str, name: &str) -> Option<&'a str> {
-    let key = format!("export const {name}");
+    let key = format!("const {name}");
     let mut from = 0;
     while let Some(i) = src[from..].find(&key) {
-        let rest = &src[from + i + key.len()..];
-        // 名前の続き (NAME_ROWS など) は別の名前
-        if rest.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+        let at = from + i;
+        let rest = &src[at + key.len()..];
+        // 行の頭 (export を除く) に無いもの・名前の続き (NAME_ROWS など) は別の名前
+        let line = &src[src[..at].rfind('\n').map_or(0, |n| n + 1)..at];
+        if !matches!(line.trim(), "" | "export") || rest.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
             from += i + key.len();
             continue;
         }
@@ -358,9 +361,10 @@ mod tests {
 
     #[test]
     fn tables() {
-        let src = "export const ADDITIONAL_ROWS: string[] = [\n  \"ab\", // 85区\n  \"cd\",\n];\n\
+        let src = "const ADDITIONAL_ROWS: string[] = [\n  \"ab\", // 85区\n  \"cd\",\n];\n\
                    export const ADDITIONAL = ADDITIONAL_ROWS.join('');\n\
                    export const M = new Map<number, string>([\n  [0x7c58, '(vn)'], // 楽器\n]);\n\
+                   /**\n * const S = \"comment\" は読まない\n */\n\
                    export const S = \"x\\\"y\";";
         assert_eq!(table(src, "ADDITIONAL").unwrap(), Some(Val::Str("abcd".into())));
         assert_eq!(
