@@ -5,14 +5,15 @@
 //!   - b24-tables.ts      字幕の文字の表 (かな・英数・半角記号・JIS の差分・追加記号・DRCS の置き換え先)
 //!   - aribtext-gaiji.ts  番組表などの ARIB 外字 (GAIJI。番組表だけで違える EPG_ONLY)
 //!   - fold.ts            検索の寄せの表 (FOLD。寄せた先の字)
-//!   - ../jis_to_unicode_map.js  web-bml のデータ放送の表
-//!   - ../index-jis0208.txt      EUC-JP の表 (字幕の漢字は EUC-JP で読んだものとの差分だけ持つので)
+//!   - ../index-jis0208.txt      EUC-JP の表 (WHATWG。ブラウザの TextDecoder('euc-jp') と同じ字)
 //! 表はいずれ 1 つのファイルにまとまるので、表の名前 (HIRAGANA・GAIJI など) をどのファイルからでも探す。
 //!
-//! 入れるもの: データ放送 (web-bml の表と ASCII)、字幕 (JIS X 0208 の割り当てのある区点と外字の
-//! 85・86・90〜94 区、かな・英数・記号)、DRCS の置き換え先、外字の表と寄せた先の字。
-//! 抜くもの: U+EC00〜ECBB (web-bml が自前の DRCS 用フォントで描く私用領域)。
-//! データ放送の外字は私用領域 (U+E0xx〜E3xx) で来るので、同じ区点の字幕・外字の表の字へつなぐ (pua)。
+//! 入れるもの: データ放送 (ASCII と、EUC-JP の 1〜84 区。13 区は除く)、字幕 (JIS X 0208 の割り当てのある
+//! 区点と外字の 85・86・90〜94 区、かな・英数・記号)、DRCS の置き換え先、外字の表と寄せた先の字。
+//! データ放送は denpa のエンジン (src/lib/bml/euc.ts) が 1〜84 区を TextDecoder('euc-jp') で読み、
+//! 85 区から先は字幕と同じ追加記号 (ADDITIONAL) に開く。
+//! 13 区は WHATWG の EUC-JP では NEC 特殊文字だが、ARIB の放送は使わない (同じ字は追加記号にある)。
+//! 追加記号に私用領域の字があれば (92区56〜85点の楽器の略記)、同じ区点の外字の表の字へつなぐ (pua)。
 //!
 //! TS・JS は実行せず、表のリテラル (文字列・数・配列、// と /* */ の注釈) だけを読む。
 
@@ -207,13 +208,15 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
     if src.is_empty() {
         bail!("{} に denpa の表がありません (先に fetch.sh)", denpa.display());
     }
-    let jis = std::fs::read_to_string(dir.join("jis_to_unicode_map.js")).ctx(|| "jis_to_unicode_map.js (先に fetch.sh)".into())?;
-    let mut euc: BTreeMap<usize, u32> = BTreeMap::new();
+    // JIS X 0208 の割り当てのある区点 (0 始まり) と字: EUC-JP の 1〜84 区。13 区 (NEC 特殊文字) は除く
+    let mut jis0208: BTreeMap<usize, u32> = BTreeMap::new();
     for line in std::fs::read_to_string(dir.join("index-jis0208.txt")).ctx(|| "index-jis0208.txt (先に fetch.sh)".into())?.lines() {
         let mut f = line.split('\t');
         if let (Some(p), Some(c)) = (f.next(), f.next()) {
             if let (Ok(p), Some(c)) = (p.trim().parse::<usize>(), num(c)) {
-                euc.entry(p).or_insert(c as u32);
+                if p < 84 * 94 && p / 94 != 12 {
+                    jis0208.entry(p).or_insert(c as u32);
+                }
             }
         }
     }
@@ -221,23 +224,9 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
     let bad = |c: u32| c == 0xFFFD || c < 0x20;
     let mut out = BTreeSet::new();
 
-    // データ放送
-    let body = jis.split("exports.jisToUnicodeMap = [").nth(1).ctx(|| "jisToUnicodeMap がありません".into())?;
-    let Val::Arr(cells) = js_value(&format!("[{body}"))?.0 else { bail!("jisToUnicodeMap が配列でない") };
-    let mut bml: BTreeMap<usize, u32> = BTreeMap::new();
-    for (i, v) in cells.iter().enumerate() {
-        match v {
-            Val::Num(n) if *n >= 0 => {
-                bml.insert(i, *n as u32);
-                if !bad(*n as u32) {
-                    out.insert(*n as u32);
-                }
-            }
-            Val::Num(_) => {}
-            _ => bail!("jisToUnicodeMap に数でない要素があります (読み手を直す)"),
-        }
-    }
+    // データ放送: ASCII と EUC-JP の 1〜84 区 (85 区から先は字幕と同じ追加記号)
     out.extend(0x20..0x7F);
+    out.extend(jis0208.values().copied().filter(|&c| !bad(c)));
 
     // 字幕
     for name in ["HIRAGANA", "KATAKANA", "KANA_SYMBOLS_HALF", "JISX0201", "JISX0201_HALF", "ALNUM_FULL", "ALNUM_HALF", "KANJI_SYMBOLS_HALF", "ADDITIONAL"] {
@@ -265,10 +254,10 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
                 return c;
             }
         }
-        euc.get(&i).copied().unwrap_or(0xFFFD)
+        jis0208.get(&i).copied().unwrap_or(0xFFFD)
     };
     for i in 0..94 * 94 {
-        if !bml.contains_key(&i) && !gaiji_row(i / 94) {
+        if !jis0208.contains_key(&i) && !gaiji_row(i / 94) {
             continue; // 割り当てのない区点は入れない
         }
         let c = caption(i);
@@ -306,16 +295,14 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
         }
     }
 
-    // データ放送の外字 (私用領域) → 同じ区点の字
-    let mut pua = BTreeMap::new();
-    for (&i, &p) in &bml {
-        if !(0xE000..=0xF8FF).contains(&p) || (0xEC00..=0xECBB).contains(&p) {
+    // 追加記号の私用領域の字 (92区56〜85点の楽器の略記) → 同じ区点の外字の表の字
+    let mut pua: BTreeMap<u32, Pua> = BTreeMap::new();
+    for (k, &p) in additional.iter().enumerate() {
+        if !(0xE000..=0xF8FF).contains(&p) || pua.contains_key(&p) {
             continue;
         }
-        let c = caption(i);
-        let target = if !bad(c) && !(0xE000..=0xF8FF).contains(&c) {
-            Pua::Char(c)
-        } else if let Some(s) = gaiji.get(&i) {
+        let i = 84 * 94 + k;
+        let target = if let Some(s) = gaiji.get(&i) {
             let mut cs = s.chars();
             match (cs.next(), cs.next()) {
                 (Some(one), None) => Pua::Char(one as u32),
@@ -326,8 +313,7 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
         };
         pua.insert(p, target);
     }
-    let codepoints = out.into_iter().filter(|c| !(0xEC00..=0xECBB).contains(c)).collect();
-    Ok(Repertoire { codepoints, pua })
+    Ok(Repertoire { codepoints: out, pua })
 }
 
 /// 一覧を書き出す (見るため。ビルドは load を直に使う)

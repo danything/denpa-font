@@ -1,6 +1,6 @@
 # 作り方
 
-取ってくる・確かめるのは [fetch.sh](../fetch.sh) (curl・sha256sum・openssl・base64・tar)、フォントを作るのは Rust の道具 1 本 ([tools/](../tools))。
+取ってくる・確かめるのは [fetch.sh](../fetch.sh) (curl・sha256sum)、フォントを作るのは Rust の道具 1 本 ([tools/](../tools))。
 道具はネットに触りません。依存は fontations の skrifa・write-fonts と ttf2woff2 だけで、版は [rust-toolchain.toml](../rust-toolchain.toml) と `tools/Cargo.lock` で固定してあります。
 
 ```sh
