@@ -37,12 +37,11 @@
       "automerge": true
     },
     {
-      "description": "元フォントの版上げは字の形が変わるので自動では入れない。CI の「前の版から変わった字」の要約と見本 (artifact の changes) を人が見て入れる。repo-config の「all dependencies」の1本に入ると、自動で入る denpa の表の版上げまで止まるので、別の PR に分ける",
+      "description": "元フォントの版上げ。source-bump.yml が同じブランチに sha256 を書き換えたコミットを足すので、ほかの依存と混ぜずに別の PR にする。CI (build と、前の版から変わった字の要約) が通れば自動で入れる",
       "matchDepNames": ["googlefonts/morisawa-biz-ud-gothic"],
       "groupName": "BIZ UDゴシック",
       "groupSlug": "biz-ud-gothic",
-      "automerge": false,
-      "addLabels": ["needs-review"]
+      "automerge": true
     }
   ]
 }
