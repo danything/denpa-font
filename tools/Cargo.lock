@@ -270,9 +270,9 @@ dependencies = [
 
 [[package]]
 name = "ttf2woff2"
-version = "0.13.3"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61405db12fdd9c3881ccd8a9881fea46abec68096fedd6d50b6ab8538b442b28"
+checksum = "b1494dcd5cf70d6bab4c20a403ce808ab34b7d9a0e0ae8537c984c25b2b46fd6"
 dependencies = [
  "brotli",
  "byteorder",
