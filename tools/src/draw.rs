@@ -635,6 +635,14 @@ pub fn draw(c: u32, base: &Base) -> Result<Option<Shape>> {
             s.extend(reverse(capsule((CX - 60.0, 755.0), (CX + 60.0, 755.0), 34.0)));
             s.extend(reverse(circle(CX, 90.0, 42.0)));
         }
+        0x1F50A => {
+            // 🔊 音の出ているスピーカー: 黒い塗りの本体と広がる口 (📱 と同じく黒い塗り) に、右へ 3 本の音の弧
+            let (x0, x1, x2) = (100.0, 250.0, 420.0);
+            s = poly(&[(x0, CY + 140.0), (x1, CY + 140.0), (x2, CY + 340.0), (x2, CY - 340.0), (x1, CY - 140.0), (x0, CY - 140.0)]);
+            for r in [180.0, 330.0, 480.0] {
+                s.extend(arc(x2 - 20.0, CY, r, -45.0, 45.0, LINE * 1.4));
+            }
+        }
 
         _ => return Ok(None),
     }
