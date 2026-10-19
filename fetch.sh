@@ -8,11 +8,11 @@ mkdir -p "$S/denpa"
 
 # 字の一覧を作る denpa の表の版 (Renovate が追う)
 # renovate: datasource=git-refs depName=https://github.com/danything/denpa branch=main
-DENPA_COMMIT=60a4d710c9a600a778a3ad53a2a7325a789569f6
+DENPA_COMMIT=3528dc4508094d9e33cb7ac8bfec893e8b420221
 # EUC-JP の表 (WHATWG Encoding Standard の index-jis0208。ブラウザの TextDecoder と同じ字。
 # 字幕の漢字 (EUC-JP との差分) と、denpa のデータ放送のエンジン (TextDecoder('euc-jp') で読む) の 1〜84 区)
 # renovate: datasource=git-refs depName=https://github.com/whatwg/encoding branch=main
-WHATWG_ENCODING_COMMIT=a985b62a9b45c17da3e17a9f0a0b4e30c34c4a8a
+WHATWG_ENCODING_COMMIT=dd7943441a861a60a073bffa55869d91cb6a8288
 # BIZ UDゴシック Regular (googlefonts/morisawa-biz-ud-gothic の GitHub リリース。OFL 1.1)。
 # 配布元のリリースの BIZ_UPSTREAM (sha256 は BIZ_UPSTREAM_SHA256) から出した ttf と許諾文を、このリポジトリのリリース
 # source-bizudgothic-<版> に置いてある。
