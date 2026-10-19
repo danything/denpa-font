@@ -12,7 +12,7 @@ DENPA_COMMIT=975166b2b891befc36dec7fee883ec7162488383
 # EUC-JP の表 (WHATWG Encoding Standard の index-jis0208。ブラウザの TextDecoder と同じ字。
 # 字幕の漢字 (EUC-JP との差分) と、denpa のデータ放送のエンジン (TextDecoder('euc-jp') で読む) の 1〜84 区)
 # renovate: datasource=git-refs depName=https://github.com/whatwg/encoding branch=main
-WHATWG_ENCODING_COMMIT=dd7943441a861a60a073bffa55869d91cb6a8288
+WHATWG_ENCODING_COMMIT=be17ac5c49881336538acfc7b40dba3c8009144b
 # BIZ UDゴシック Regular (googlefonts/morisawa-biz-ud-gothic の GitHub リリース。OFL 1.1)。
 # 配布元のリリースの BIZ_UPSTREAM (sha256 は BIZ_UPSTREAM_SHA256) から出した ttf と許諾文を、このリポジトリのリリース
 # source-bizudgothic-<版> に置いてある。
