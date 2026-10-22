@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-skrifa = "0.48"
+skrifa = "0.49.0"
 ttf2woff2 = { version = "0.14.1", default-features = false }
-write-fonts = { version = "0.54.1", features = ["read"] }
+write-fonts = { version = "0.55.0", features = ["read"] }
