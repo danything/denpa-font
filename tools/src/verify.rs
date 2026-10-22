@@ -263,18 +263,25 @@ fn read_palt(font: &FontRef, errors: &mut Vec<String>) -> Result<(BTreeMap<Glyph
             match lookups.lookups().get(li.get() as usize)? {
                 PositionLookup::Single(l) => {
                     for st in l.subtables().iter() {
-                        let mut put = |g: skrifa::raw::types::GlyphId16, v: skrifa::raw::tables::gpos::ValueRecord| {
+                        let mut put = |g: GlyphId, v: skrifa::raw::tables::gpos::ValueRecord| {
                             if v.y_placement().unwrap_or(0) != 0 || v.y_advance().unwrap_or(0) != 0 {
                                 errors.push(format!("palt で glyph {g} が縦に動く"));
                             }
                             let a = (v.x_placement().unwrap_or(0) as i32, v.x_advance().unwrap_or(0) as i32);
-                            if out.insert(GlyphId::from(g), a).is_some() {
+                            if out.insert(g, a).is_some() {
                                 errors.push(format!("palt で glyph {g} を 2 度動かす"));
                             }
                         };
                         match st? {
                             SinglePos::Format1(t) => t.coverage()?.iter().for_each(|g| put(g, t.value_record())),
                             SinglePos::Format2(t) => {
+                                for (g, v) in t.coverage()?.iter().zip(t.value_records().iter()) {
+                                    put(g, v?);
+                                }
+                            }
+                            // Format 3・4 は 1・2 と同じ形で、オフセットだけ 32 ビット
+                            SinglePos::Format3(t) => t.coverage()?.iter().for_each(|g| put(g, t.value_record())),
+                            SinglePos::Format4(t) => {
                                 for (g, v) in t.coverage()?.iter().zip(t.value_records().iter()) {
                                     put(g, v?);
                                 }
