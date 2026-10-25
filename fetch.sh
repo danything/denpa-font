@@ -8,7 +8,7 @@ mkdir -p "$S/denpa"
 
 # 字の一覧を作る denpa の表の版 (Renovate が追う)
 # renovate: datasource=git-refs depName=https://github.com/danything/denpa branch=main
-DENPA_COMMIT=5f2f40fb5cbb53c3504acae5087035d2d41bc962
+DENPA_COMMIT=1cc31dc7b41e3053a27aa5f5284ef8c3460d58ed
 # EUC-JP の表 (WHATWG Encoding Standard の index-jis0208。ブラウザの TextDecoder と同じ字。
 # 字幕の漢字 (EUC-JP との差分) と、denpa のデータ放送のエンジン (TextDecoder('euc-jp') で読む) の 1〜84 区)
 # renovate: datasource=git-refs depName=https://github.com/whatwg/encoding branch=main
@@ -45,7 +45,7 @@ done
 # denpa の表 (無いファイルは飛ばす。表はいずれ 1 つのファイルにまとまる)
 if [ "$(cat "$S/denpa/COMMIT" 2>/dev/null)" != "$DENPA_COMMIT" ]; then
   rm -f "$S"/denpa/*
-  for f in src/lib/ts/b24-tables.ts src/lib/ts/aribtext-gaiji.ts src/lib/fold.ts; do
+  for f in packages/arib/src/b24-tables.ts packages/arib/src/aribtext-gaiji.ts src/lib/fold.ts; do
     get "https://raw.githubusercontent.com/danything/denpa/$DENPA_COMMIT/$f" "$S/denpa/$(basename "$f")" || echo "denpa に $f はありません"
   done
   echo "$DENPA_COMMIT" > "$S/denpa/COMMIT"
