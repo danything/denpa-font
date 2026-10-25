@@ -9,22 +9,22 @@ name: source-bump
 #   4. GITHUB_TOKEN の push ではほかのワークフローが動かないので、そのコミットを build.yml で確かめ、
 #      ruleset の必須チェック (build・claude-review) の status を自分で付ける (xool と同じやり方)
 # 必須チェックが通れば Renovate が自動でマージする。前の版から変わった字の要約と見本 (artifact の changes) は CI に残る。
-# GitHub Apps・デプロイキーは使わず、GITHUB_TOKEN だけで動く。手で回すときは workflow_dispatch にブランチを渡す。
+# GitHub Apps・デプロイキーは使わず、GITHUB_TOKEN だけで動く。
+#
+# 起こすのは renovate/** への push だけ。workflow_dispatch は置かない: main で起こすと、PR のブランチのコード
+# (fetch.sh・tools/) が main のキャッシュの範囲で動き、build.yml の actions/cache から main のキャッシュを
+# 書き換えられてしまう (キャッシュ汚染)。push なら実行もキャッシュもそのブランチの範囲に閉じる。
+# 回し直すときは、そのブランチの push で起きた実行を Actions で Re-run する (実行が無ければ Renovate に rebase させる)。
 on:
   push:
     branches: ['renovate/**']
     paths: [fetch.sh]
-  workflow_dispatch:
-    inputs:
-      branch:
-        description: 版を上げた fetch.sh のあるブランチ
-        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: source-bump-${{ inputs.branch || github.ref_name }}
+  group: source-bump-${{ github.ref_name }}
 
 jobs:
   bump:
@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.branch || github.ref_name }}
+          ref: ${{ github.ref_name }}
 
       - name: 上流から取って sha256 を測る
         id: src

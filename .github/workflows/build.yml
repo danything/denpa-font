@@ -6,7 +6,9 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-  # 元フォントの版上げ (source-bump.yml) が、sha256 を書き換えたコミットを確かめるときに呼ぶ
+  # 元フォントの版上げ (source-bump.yml) が、sha256 を書き換えたコミットを確かめるときに呼ぶ。
+  # 呼ぶ側は renovate/** への push だけで動くので、下の actions/cache が書くのはそのブランチの範囲のキャッシュ。
+  # main の範囲で PR のコードを動かす起こし方 (workflow_dispatch など) から呼ばないこと (キャッシュ汚染になる)
   workflow_call:
     inputs:
       ref:

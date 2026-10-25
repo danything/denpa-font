@@ -21,6 +21,6 @@ sha256 は Renovate では書き換えられないので、Renovate の PR の�
 3. fetch.sh の sha256 を書き換えてコミットし、同じブランチに push する
 4. GITHUB_TOKEN の push では CI が動かないので、そのコミットを build.yml で確かめ、必須チェック (build・claude-review) の status を付ける
 
-GitHub Apps・デプロイキーは使わず GITHUB_TOKEN だけです。動かなかったときは Actions の source-bump を `workflow_dispatch` でブランチを渡して回します。
+GitHub Apps・デプロイキーは使わず GITHUB_TOKEN だけです。動かなかったときは、そのブランチの push で起きた source-bump の実行を Actions で Re-run します (実行が無ければ Renovate の PR で rebase させる)。`workflow_dispatch` は置いていません。main で起こすと PR のブランチのコードが main のキャッシュの範囲で動き、main のキャッシュを汚せてしまうためです。
 
 **字の形が変わるので自動ではマージしません。** CI のジョブの要約 (前の版から描き方が変わった字) と見本 (artifact の `changes`) を見て、人が入れます。
