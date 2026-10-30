@@ -643,6 +643,16 @@ pub fn draw(c: u32, base: &Base) -> Result<Option<Shape>> {
                 s.extend(arc(x2 - 20.0, CY, r, -45.0, 45.0, LINE * 1.4));
             }
         }
+        0x1F4FA => {
+            // 📺 テレビ: 黒い塗りの横長の本体 (📱 と同じく黒い塗り) に、白く抜いた画面と、上へ V 字の 2 本のアンテナ・下に 2 本の脚
+            let (x0, x1, y0, y1) = (70.0, 954.0, 90.0, 640.0);
+            s = rrect(x0, y0, x1, y1, 90.0);
+            s.extend(reverse(rrect(x0 + LINE * 1.5, y0 + LINE * 1.5, x1 - LINE * 1.5, y1 - LINE * 1.5, 40.0)));
+            for sx in [-1.0, 1.0] {
+                s.extend(capsule((CX + sx * 30.0, y1 - 10.0), (CX + sx * 200.0, 810.0), LINE));
+                s.extend(capsule((CX + sx * 260.0, y0 + 10.0), (CX + sx * 320.0, -20.0), LINE));
+            }
+        }
 
         _ => return Ok(None),
     }
