@@ -316,7 +316,7 @@ fn build(version: &str) -> Result<()> {
     let glyphs = Glyphs { data: data_out, advance: jobs.iter().map(|j| j.1).collect(), lsb };
     eprintln!("{} 字を {:.1} 秒で作った ({threads} スレッド)", glyphs.len(), t0.elapsed().as_secs_f64());
 
-    // ttf は全部の字で 1 つ。web フォント (woff2) は基本の字と、JIS X 0213 にだけある字 (repertoire.extra) の 2 つに分ける。
+    // ttf は全部の字で 1 つ。web フォント (woff2) は基本の字と、JIS X 0213 で足された漢字 (repertoire.extra) の 2 つに分ける。
     // ブラウザは unicode-range で、別のファイルの字が画面に出たときだけそちらを取りに行く
     fs::create_dir_all(out.join("dist"))?;
     let ttf = tables(&font, &glyphs, &cmap, &ligatures, major, minor, epoch)?;
@@ -337,7 +337,7 @@ fn build(version: &str) -> Result<()> {
     Ok(())
 }
 
-/// JIS X 0213 にだけある字の web フォントのファイル名 (拡張子を除く)
+/// JIS X 0213 で足された漢字の web フォントのファイル名 (拡張子を除く)
 pub const EXTRA: &str = "denpa-font-jisx0213";
 
 /// keep が真の字だけのフォントの中身 (字の番号は詰め直す。.notdef は 0 のまま)。

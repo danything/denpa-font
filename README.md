@@ -4,7 +4,7 @@
 BIZ UDゴシック (モリサワ) の角を機械で丸め、元に無い ARIB の記号などは BIZ UDゴシックの部品で描き足しています。
 
 - ファミリ名 `Denpa Font` (PostScript 名 `DenpaFont-Regular`)、em 1024、送り幅は半角 512・全角 1024 だけ
-- 収める字は [danything/denpa](https://github.com/danything/denpa) の表から決め、全部入っています (v3.6 で 11,709 字。web フォントは基本の 7,675 字と JIS X 0213 にだけある 4,034 字に分けてある)。縦書き・ヒンティングは持ちません。全角の英数字を詰める palt と、か゚ のような2つのコードポイントの字を1字に組む ccmp を持ちます ([docs/design.md](docs/design.md#palt-全角の英数字を詰める))
+- 収める字は [danything/denpa](https://github.com/danything/denpa) の表から決め、全部入っています (v3.6 で 11,709 字。web フォントは基本の 8,128 字と JIS X 0213 で足された漢字 3,581 字に分けてある)。縦書き・ヒンティングは持ちません。全角の英数字を詰める palt と、か゚ のような2つのコードポイントの字を1字に組む ccmp を持ちます ([docs/design.md](docs/design.md#palt-全角の英数字を詰める))
 
 ## 入手
 
@@ -13,12 +13,12 @@ BIZ UDゴシック (モリサワ) の角を機械で丸め、元に無い ARIB �
 | ファイル | 用途 |
 | --- | --- |
 | `denpa-font.ttf` | TrueType (fontconfig・Android など)。全部の字で 1 つ |
-| `denpa-font.woff2` | web フォント (ブラウザ)。基本の字 (JIS X 0208・ARIB の外字・か゚ など組む字) |
-| `denpa-font-jisx0213.woff2` | web フォント (ブラウザ)。JIS X 0213 にだけある字。基本のファイルと同じファミリ名で、`unicode-range` を付けて名乗らせる |
+| `denpa-font.woff2` | web フォント (ブラウザ)。基本の字 (JIS X 0208・ARIB の外字・JIS X 0213 の記号やかななど漢字でない字・か゚ など組む字) |
+| `denpa-font-jisx0213.woff2` | web フォント (ブラウザ)。JIS X 0213 で足された漢字 (第3・第4水準)。基本のファイルと同じファミリ名で、`unicode-range` を付けて名乗らせる |
 | `denpa-font-jisx0213.txt` | `denpa-font-jisx0213.woff2` の字の範囲 (CSS の `unicode-range` の値。1 行) |
 | `SHA256SUMS` | 上の 4 つの sha256 |
 
-web フォントは 2 つに分けてあり、ブラウザは JIS X 0213 にだけある字が画面に出たときだけ `denpa-font-jisx0213.woff2` を取りに行きます。
+web フォントは 2 つに分けてあり、ブラウザは JIS X 0213 で足された漢字が画面に出たときだけ `denpa-font-jisx0213.woff2` を取りに行きます。
 
 ```css
 @font-face { font-family: "Denpa Font"; src: url(denpa-font.woff2) format("woff2"); }

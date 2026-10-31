@@ -8,7 +8,7 @@
 //! 3. 前の版と比べて描き方が変わった字: ヒンティング無し・フォント自身のヒンティング (TrueType の命令)・
 //!    自動ヒンティング (FreeType の light 相当) で描いた輪郭 (24・36px) と送り幅で比べ、
 //!    一覧を出し、前と今の字形を並べた見本 (build/changes.svg) を書く (止めない)
-//! 4. woff2 (基本の字と JIS X 0213 にだけある字の 2 つ) を解いたもの (CI が woff2_decompress で解く) が、2 つで ttf と同じ字になり
+//! 4. woff2 (基本の字と JIS X 0213 で足された漢字の 2 つ) を解いたもの (CI が woff2_decompress で解く) が、2 つで ttf と同じ字になり
 //!    (重ならず、分け方は build の一覧のとおり)、palt は基本のファイルで引け、ccmp の並びがどれかのファイルの中で組めること
 //! 5. palt: 全角の英数字と記号 (U+FF01–FF5E) だけを墨の幅から決めた量で詰め、どの用字系からも引けること。
 //!    その字の既定の送り幅は全角 1024 (半角の同じ字は 512) のまま
@@ -213,7 +213,7 @@ pub fn run(font_path: &Path, prev_path: Option<&Path>, woff2_ttf: &[&Path]) -> R
     }
 
     // 4. woff2 (解くのは道具の外。CI が woff2_decompress で解いたものを渡す)
-    // 基本のファイルと JIS X 0213 にだけある字のファイル (この順)。2 つで ttf と同じ字になる
+    // 基本のファイルと JIS X 0213 で足された漢字のファイル (この順)。2 つで ttf と同じ字になる
     let mut seen: BTreeSet<u32> = BTreeSet::new();
     let mut sequences = BTreeSet::new();
     for (k, p) in woff2_ttf.iter().enumerate() {

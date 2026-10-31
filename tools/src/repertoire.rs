@@ -14,7 +14,7 @@
 //! データ放送は denpa のエンジン (src/lib/bml/euc.ts) が 1〜84 区を TextDecoder('euc-jp') で読み、
 //! 85 区から先は字幕と同じ追加記号 (ADDITIONAL) に開く。
 //! 2つのコードポイントで 1 字の字 (か゚ など。KANJI_SEQUENCES) は、元の字を入れたうえで 1 字に組む (sequences。GSUB の ccmp)。
-//! web フォントは JIS X 0213 にだけある字 (extra) を別のファイルに分ける (docs/repertoire.md)。
+//! web フォントは JIS X 0213 で足された漢字 (extra) を別のファイルに分ける (docs/repertoire.md)。
 //! 追加記号に私用領域の字があれば (92区56〜85点の楽器の略記)、同じ区点の外字の表の字へつなぐ (pua)。
 //!
 //! TS・JS は実行せず、表のリテラル (文字列・数・配列、// と /* */ の注釈) だけを読む。
@@ -37,7 +37,7 @@ pub struct Repertoire {
     pub pua: BTreeMap<u32, Pua>,
     /// 2つ以上のコードポイントで 1 字の字 (JIS X 0213 の か゚・æ̀・˩˥ など)。並びのコードポイントは codepoints にもある
     pub sequences: BTreeSet<Vec<u32>>,
-    /// web フォントで別のファイルに分ける字 (JIS X 0213 にだけある字)。codepoints にもある。ほかの字は基本のファイル
+    /// web フォントで別のファイルに分ける字 (JIS X 0213 で足された漢字)。codepoints にもある。ほかの字は基本のファイル
     pub extra: BTreeSet<u32>,
 }
 
@@ -231,7 +231,7 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
     }
 
     let bad = |c: u32| c == 0xFFFD || c < 0x20;
-    // out: web フォントの基本のファイルに入れる字。x0213: JIS X 0213 にだけある字 (web フォントでは別のファイル。下の extra)
+    // out: web フォントの基本のファイルに入れる字。x0213: JIS X 0213 にだけある字 (そのうち漢字は web フォントで別のファイル。下の extra)
     let mut out = BTreeSet::new();
     let mut x0213 = BTreeSet::new();
 
@@ -336,9 +336,16 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
         };
         pua.insert(p, target);
     }
-    let extra: BTreeSet<u32> = x0213.difference(&out).copied().collect();
-    out.extend(extra.iter().copied());
+    // web フォントで別のファイルに分けるのは JIS X 0213 で足された漢字だけ (第3・第4水準。字幕や番組表にはめったに出ない)。
+    // 記号・かな・ラテン文字など漢字でない字はよく出るので基本のファイルに入れる (別のファイルにすると、たいていの画面がそれを取りに行く)
+    let extra: BTreeSet<u32> = x0213.difference(&out).copied().filter(|&c| is_ideograph(c)).collect();
+    out.extend(x0213.iter().copied());
     Ok(Repertoire { codepoints: out, pua, sequences, extra })
+}
+
+/// 漢字 (CJK 統合漢字とその拡張・互換漢字)。JIS X 0213 の漢字はどれもここに入る
+fn is_ideograph(c: u32) -> bool {
+    matches!(c, 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0x20000..=0x3FFFF)
 }
 
 /// 一覧を書き出す (見るため。ビルドは load を直に使う)
