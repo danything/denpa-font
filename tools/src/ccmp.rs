@@ -82,6 +82,10 @@ pub fn gsub(cmap: &BTreeMap<u32, u32>, ligatures: &[(Vec<u32>, u32)]) -> Result<
         }
         sets.entry(gs[0]).or_default().push((gs[1..].to_vec(), gid(*lig)?));
     }
+    // 組の中では先に合ったものを使うので、長い並びを先に置く (短い並びが長い並びの頭と同じでも長いほうが組める)
+    for v in sets.values_mut() {
+        v.sort_by_key(|(rest, _)| std::cmp::Reverse(rest.len()));
+    }
     let coverage: CoverageTable = sets.keys().map(|&g| GlyphId16::new(g)).collect();
     let sets = sets
         .values()
