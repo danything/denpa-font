@@ -1,11 +1,12 @@
 //! Denpa Font を作る道具。リポジトリの根で動かす:
 //!
-//!   cargo run --release --manifest-path tools/Cargo.toml -- build 3.0     元から作る (dist/。build/ に途中のもの)
-//!   cargo run ... -- verify dist/denpa-font.ttf [--prev ttf] [--woff2 ttf]   確かめる
+//!   cargo run --release --manifest-path tools/Cargo.toml -- build 3.0     元から作る (dist/ に ttf と woff2 の 2 つ。build/ に途中のもの)
+//!   cargo run ... -- verify dist/denpa-font.ttf [--prev ttf] [--woff2 基本 ttf --woff2 JIS X 0213 ttf]   確かめる
 //!   cargo run ... -- repertoire                                           収める字の一覧を見る
 //!
 //! 並べて作るスレッドの数は DENPA_THREADS (無ければ CPU の数)。書き出す先は DENPA_OUT (無ければここ。build/ と dist/)。
 
+mod ccmp;
 mod draw;
 mod err;
 mod fillet;
@@ -57,15 +58,16 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("build") => build(args.get(1).map_or("0.0", String::as_str)),
         Some("verify") => {
-            // verify <ttf> [--prev 前の版の ttf] [--woff2 woff2 を解いた ttf]
+            // verify <ttf> [--prev 前の版の ttf] [--woff2 基本の woff2 を解いた ttf --woff2 JIS X 0213 の woff2 を解いた ttf]
             let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(Path::new);
             if args.len() < 2 {
-                bail!("verify <ttf> [--prev ttf] [--woff2 ttf]");
+                bail!("verify <ttf> [--prev ttf] [--woff2 ttf --woff2 ttf]");
             }
-            verify::run(Path::new(&args[1]), opt("--prev"), opt("--woff2"))
+            let woff2: Vec<&Path> = args.windows(2).filter(|w| w[0] == "--woff2").map(|w| Path::new(&w[1])).collect();
+            verify::run(Path::new(&args[1]), opt("--prev"), &woff2)
         }
         Some("repertoire") => repertoire::run(Path::new(SRC)),
-        _ => bail!("build <版> | verify <ttf> [--prev ttf] [--woff2 ttf] | repertoire (先に fetch.sh)"),
+        _ => bail!("build <版> | verify <ttf> [--prev ttf] [--woff2 ttf --woff2 ttf] | repertoire (先に fetch.sh)"),
     }
 }
 
@@ -119,8 +121,10 @@ impl OutlinePen for Pen {
     }
 }
 
-/// 元のフォントの字を em 1024 にして読む (.notdef と、Unicode の割り当てのある字)
-fn read_base(font: &FontRef) -> Result<((Vec<Contour>, u16), Base)> {
+/// 元のフォントの字を em 1024 にして読む (.notdef と、Unicode の割り当てのある字)。
+/// 3 つめは、ほかに読む字 (extra。ccmp の合字) の輪郭と送り幅
+#[allow(clippy::type_complexity)]
+fn read_base(font: &FontRef, extra: &[GlyphId]) -> Result<((Vec<Contour>, u16), Base, Vec<(Vec<Contour>, u16)>)> {
     let upm = font.head()?.units_per_em() as f32;
     let size = Size::new(UPM as f32);
     let outlines = font.outline_glyphs();
@@ -144,7 +148,8 @@ fn read_base(font: &FontRef) -> Result<((Vec<Contour>, u16), Base)> {
     for (c, gid) in font.charmap().mappings() {
         base.insert(c, get(gid)?);
     }
-    Ok((notdef, base))
+    let extra = extra.iter().map(|&g| get(g)).collect::<Result<Vec<_>>>()?;
+    Ok((notdef, base, extra))
 }
 
 fn build(version: &str) -> Result<()> {
@@ -157,7 +162,11 @@ fn build(version: &str) -> Result<()> {
     if font.head()?.units_per_em() != 2 * UPM {
         bail!("{BIZ} の em が 2048 でない (半分にして 1024 にする前提)");
     }
-    let (notdef, base) = read_base(&font)?;
+    // 2つ以上のコードポイントで 1 字の字は、元のフォントの ccmp の合字から作る
+    let ligature_src = ccmp::read(&font)?;
+    let ligature_gids: Vec<GlyphId> = ligature_src.values().copied().collect();
+    let (notdef, base, ligature_shapes) = read_base(&font, &ligature_gids)?;
+    let ligature_shapes: BTreeMap<&Vec<u32>, &(Vec<Contour>, u16)> = ligature_src.keys().zip(&ligature_shapes).collect();
     let mut repertoire = repertoire::load(src)?;
     let parts = parts::load("data/parts.txt")?;
     // 試すとき: DENPA_ONLY に書いた字だけ作る (parts.txt にあれば、denpa の表にまだ無い字も)
@@ -241,6 +250,19 @@ fn build(version: &str) -> Result<()> {
             None => {}
         }
     }
+    // 2つ以上のコードポイントで 1 字の字 (並びの字が全部入っているものだけ。DENPA_ONLY で試すときに欠ける)
+    let mut ligatures: Vec<(Vec<u32>, u32)> = vec![];
+    for seq in &repertoire.sequences {
+        if !seq.iter().all(|c| cmap.contains_key(c)) {
+            continue;
+        }
+        let text: String = seq.iter().map(|&c| ch(c)).collect();
+        let Some((s, adv)) = ligature_shapes.get(seq) else { bail!("BIZ UDゴシックの ccmp に {text} の合字がありません") };
+        ligatures.push((seq.clone(), jobs.len() as u32));
+        jobs.push((if s.is_empty() { Job::Keep(s.clone()) } else { Job::Fillet(s.clone()) }, *adv));
+        let hex: Vec<String> = seq.iter().map(|c| format!("U+{c:04X}")).collect();
+        writeln!(report, "ccmp    {}  # {text}", hex.join(" "))?;
+    }
     for c in missing {
         writeln!(report, "# missing U+{c:04X} {}", ch(c))?;
     }
@@ -294,24 +316,77 @@ fn build(version: &str) -> Result<()> {
     let glyphs = Glyphs { data: data_out, advance: jobs.iter().map(|j| j.1).collect(), lsb };
     eprintln!("{} 字を {:.1} 秒で作った ({threads} スレッド)", glyphs.len(), t0.elapsed().as_secs_f64());
 
-    let ttf = tables(&font, &glyphs, &cmap, major, minor, epoch)?;
+    // ttf は全部の字で 1 つ。web フォント (woff2) は基本の字と、JIS X 0213 で足された漢字 (repertoire.extra) の 2 つに分ける。
+    // ブラウザは unicode-range で、別のファイルの字が画面に出たときだけそちらを取りに行く
     fs::create_dir_all(out.join("dist"))?;
+    let ttf = tables(&font, &glyphs, &cmap, &ligatures, major, minor, epoch)?;
     fs::write(out.join("dist/denpa-font.ttf"), &ttf)?;
-    let woff2 = ttf2woff2::encode(&ttf, ttf2woff2::BrotliQuality::from(11u8)).map_err(|e| format!("woff2: {e}"))?;
-    fs::write(out.join("dist/denpa-font.woff2"), &woff2)?;
-    println!("{}/dist/denpa-font.ttf {} バイト、denpa-font.woff2 {} バイト", out.display(), ttf.len(), woff2.len());
+    println!("{}/dist/denpa-font.ttf {} バイト", out.display(), ttf.len());
+    for (name, extra) in [("denpa-font", false), (EXTRA, true)] {
+        let (g, cm, ligs) = subset(&glyphs, &cmap, &ligatures, |c| repertoire.extra.contains(&c) == extra);
+        let woff2 = ttf2woff2::encode(&tables(&font, &g, &cm, &ligs, major, minor, epoch)?, ttf2woff2::BrotliQuality::from(11u8))
+            .map_err(|e| format!("woff2: {e}"))?;
+        fs::write(out.join(format!("dist/{name}.woff2")), &woff2)?;
+        println!("{}/dist/{name}.woff2 {} 字・{} バイト", out.display(), cm.len(), woff2.len());
+        if extra {
+            // CSS の unicode-range に書く字の範囲と、verify が突き合わせる一覧
+            fs::write(out.join(format!("dist/{name}.txt")), format!("{}\n", unicode_range(cm.keys().copied())))?;
+            fs::write(out.join(format!("build/{name}.txt")), cm.keys().map(|c| format!("U+{c:04X}\n")).collect::<String>())?;
+        }
+    }
     Ok(())
 }
 
+/// JIS X 0213 で足された漢字の web フォントのファイル名 (拡張子を除く)
+pub const EXTRA: &str = "denpa-font-jisx0213";
+
+/// keep が真の字だけのフォントの中身 (字の番号は詰め直す。.notdef は 0 のまま)。
+/// ccmp は並びの字が全部残るものだけ残す
+#[allow(clippy::type_complexity)]
+fn subset(glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>, ligatures: &[(Vec<u32>, u32)], keep: impl Fn(u32) -> bool) -> (Glyphs, BTreeMap<u32, u32>, Vec<(Vec<u32>, u32)>) {
+    let mut order: Vec<u32> = vec![0];
+    let mut renumber: BTreeMap<u32, u32> = BTreeMap::from([(0, 0)]);
+    let mut take = |g: u32| -> u32 {
+        *renumber.entry(g).or_insert_with(|| {
+            order.push(g);
+            (order.len() - 1) as u32
+        })
+    };
+    let cm: BTreeMap<u32, u32> = cmap.iter().filter(|&(&c, _)| keep(c)).map(|(&c, &g)| (c, take(g))).collect();
+    let ligs = ligatures.iter().filter(|(s, _)| s.iter().all(|c| cm.contains_key(c))).map(|(s, g)| (s.clone(), take(*g))).collect();
+    let g = Glyphs {
+        data: order.iter().map(|&g| glyphs.data[g as usize].clone()).collect(),
+        advance: order.iter().map(|&g| glyphs.advance[g as usize]).collect(),
+        lsb: order.iter().map(|&g| glyphs.lsb[g as usize]).collect(),
+    };
+    (g, cm, ligs)
+}
+
+/// CSS の unicode-range の値 (続いた字は U+XXXX-YYYY にまとめる)。字は小さい順
+pub fn unicode_range(cps: impl IntoIterator<Item = u32>) -> String {
+    let mut runs: Vec<(u32, u32)> = vec![];
+    for c in cps {
+        match runs.last_mut() {
+            Some(r) if r.1 + 1 == c => r.1 = c,
+            _ => runs.push((c, c)),
+        }
+    }
+    runs.iter().map(|&(a, b)| if a == b { format!("U+{a:X}") } else { format!("U+{a:X}-{b:X}") }).collect::<Vec<_>>().join(",")
+}
+
 /// 表を組む。元の表から運ぶのは OS/2・post・head・hhea の値だけ (em を半分にした分を直す)。
-/// ヒンティングは持たない (fpgm・prep・cvt・gasp を作らない)。縦書きの表と GSUB は持たない。
-/// GPOS は palt (全角の英数字と記号を詰める) だけ (palt.rs)
-fn tables(base: &FontRef, glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>, major: u16, minor: u16, epoch: i64) -> Result<Vec<u8>> {
+/// ヒンティングは持たない (fpgm・prep・cvt・gasp を作らない)。縦書きの表は持たない。
+/// GPOS は palt (全角の英数字と記号を詰める) だけ (palt.rs)、GSUB は ccmp (2つ以上のコードポイントで 1 字の字を組む) だけ (ccmp.rs)
+#[allow(clippy::too_many_arguments)]
+fn tables(base: &FontRef, glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>, ligatures: &[(Vec<u32>, u32)], major: u16, minor: u16, epoch: i64) -> Result<Vec<u8>> {
     let half = |v: i16| ((v as f64) / 2.0).round() as i16;
     let mut b = write_fonts::FontBuilder::new();
     let gpos = palt::gpos(glyphs, cmap)?;
     if let Some(g) = &gpos {
         b.add_table(g)?;
+    }
+    if let Some(g) = ccmp::gsub(cmap, ligatures)? {
+        b.add_table(&g)?;
     }
     let (glyf, loca, hmtx) = glyphs.tables();
     b.add_raw(Tag::new(b"glyf"), glyf);
@@ -391,7 +466,9 @@ fn tables(base: &FontRef, glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>, major: u16
     let (first, last) = (cmap.keys().next().copied().unwrap_or(0), cmap.keys().last().copied().unwrap_or(0));
     put_u16(&mut os2, 64, first.min(0xFFFF) as u16);
     put_u16(&mut os2, 66, last.min(0xFFFF) as u16);
-    put_u16(&mut os2, 94, u16::from(gpos.is_some())); // usMaxContext (palt は 1 字ずつ)
+    // usMaxContext (palt は 1 字ずつ、ccmp は並びの長さ)
+    let context = ligatures.iter().map(|(s, _)| s.len() as u16).max().unwrap_or(0).max(u16::from(gpos.is_some()));
+    put_u16(&mut os2, 94, context);
     b.add_raw(Tag::new(b"OS/2"), os2);
 
     let mut post = sfnt::table(base, b"post")?[..32].to_vec();
@@ -426,4 +503,31 @@ fn tables(base: &FontRef, glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>, major: u16
         .collect();
     b.add_table(&write_fonts::tables::name::Name::new(records))?;
     Ok(b.build())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unicode_range_joins_runs() {
+        assert_eq!(unicode_range([0x41, 0x42, 0x43, 0x45, 0x3000, 0x20089]), "U+41-43,U+45,U+3000,U+20089");
+        assert_eq!(unicode_range([]), "");
+    }
+
+    #[test]
+    fn subset_renumbers_and_keeps_whole_sequences() {
+        let g = |n: u16| Glyphs { data: vec![vec![]; n as usize], advance: (0..n).collect(), lsb: vec![0; n as usize] };
+        // 0: .notdef、1: か、2: U+309A、3: か゚、4: 擄 (別のファイル)
+        let cmap = BTreeMap::from([(0x304B, 1), (0x309A, 2), (0x64C4, 4)]);
+        let ligs = vec![(vec![0x304B, 0x309A], 3)];
+        let (base, cm, l) = subset(&g(5), &cmap, &ligs, |c| c != 0x64C4);
+        assert_eq!(cm, BTreeMap::from([(0x304B, 1), (0x309A, 2)]));
+        assert_eq!(l, vec![(vec![0x304B, 0x309A], 3)]);
+        assert_eq!(base.advance, vec![0, 1, 2, 3]);
+        let (other, cm, l) = subset(&g(5), &cmap, &ligs, |c| c == 0x64C4);
+        assert_eq!(cm, BTreeMap::from([(0x64C4, 1)]));
+        assert!(l.is_empty());
+        assert_eq!(other.advance, vec![0, 4]);
+    }
 }

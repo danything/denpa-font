@@ -52,9 +52,18 @@ BIZ UDゴシック (em 2048 を半分の 1024 にして使う) の字は、輪�
 - 既定の送り幅 (hmtx) は変えない。palt を使わなければ見え方は前と同じ
 - DFLT・hani・kana・latn のどれからも引ける (記号は前後の字の用字系になるので、和文に挟まれても効く)
 
+## ccmp (2つのコードポイントの字を1字に組む)
+
+JIS X 0213 には、Unicode では2つのコードポイントで表す字が 25 あります (か゚ ㇷ゚ などの半濁点の付いたかな、æ̀ ɔ́ などの発音記号、声調の組 ˩˥ ˥˩)。
+denpa の表 (`KANJI_SEQUENCES`) にあるものを、BIZ UDゴシックの ccmp の合字と同じ形の 1 字にします ([ccmp.rs](../tools/src/ccmp.rs))。
+
+- ccmp は既定で効くので、ブラウザもアプリも何もしなくてよい。denpa の字幕は並びを 1 区画にまとめて描く
+- 並びの字 (か・U+309A など) もそれぞれ収める (1 字ずつでも描ける)。web フォントでは、並びの字・組んだ字・ccmp をどれも基本のファイル (`denpa-font.woff2`) に入れる (ccmp は 1 つのフォントの中でしか組めない)
+- 引ける用字系は palt と同じ
+
 ## ヒンティングを持たない理由
 
 字幕・データ放送を描くところは、どれも TrueType の命令を使いません。
 Android (Android TV・denpa-tv) と Linux の Chrome は FreeType の自動ヒンティング (light) で縦だけ合わせ、macOS・iOS はヒンティングをせず、
 Windows のブラウザ (DirectWrite) もヒンティングの無いフォントをなめらかに描きます。字幕は 1 字 20px より大きいので、命令が無くても線は潰れません。
-ttfautohint などの道具も増やしません。縦書きと OpenType の組版 (vhea/vmtx/GSUB) も持ちません。GPOS は下の palt だけです。
+ttfautohint などの道具も増やしません。縦書き (vhea/vmtx) も持ちません。GPOS は下の palt だけ、GSUB は下の ccmp だけです。

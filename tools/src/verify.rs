@@ -8,7 +8,8 @@
 //! 3. 前の版と比べて描き方が変わった字: ヒンティング無し・フォント自身のヒンティング (TrueType の命令)・
 //!    自動ヒンティング (FreeType の light 相当) で描いた輪郭 (24・36px) と送り幅で比べ、
 //!    一覧を出し、前と今の字形を並べた見本 (build/changes.svg) を書く (止めない)
-//! 4. woff2 を解いたもの (CI が woff2_decompress で解く) が ttf と同じ字・同じ GPOS になること
+//! 4. woff2 (基本の字と JIS X 0213 で足された漢字の 2 つ) を解いたもの (CI が woff2_decompress で解く) が、2 つで ttf と同じ字になり
+//!    (重ならず、分け方は build の一覧のとおり)、palt は基本のファイルで引け、ccmp の並びがどれかのファイルの中で組めること
 //! 5. palt: 全角の英数字と記号 (U+FF01–FF5E) だけを墨の幅から決めた量で詰め、どの用字系からも引けること。
 //!    その字の既定の送り幅は全角 1024 (半角の同じ字は 512) のまま
 
@@ -113,7 +114,7 @@ fn differing(a: &[u8], b: &[u8], cps: &[u32], modes: &[Mode]) -> Result<BTreeSet
     Ok(cps.iter().copied().filter(|c| da.get(c) != db.get(c)).collect())
 }
 
-pub fn run(font_path: &Path, prev_path: Option<&Path>, woff2_ttf: Option<&Path>) -> Result<()> {
+pub fn run(font_path: &Path, prev_path: Option<&Path>, woff2_ttf: &[&Path]) -> Result<()> {
     let data = std::fs::read(font_path)?;
     let font = FontRef::new(&data)?;
     let mut errors: Vec<String> = vec![];
@@ -185,8 +186,6 @@ pub fn run(font_path: &Path, prev_path: Option<&Path>, woff2_ttf: Option<&Path>)
         get(S::VERSION_STRING).unwrap_or_default()
     );
 
-    let cps: Vec<u32> = have.iter().copied().collect();
-
     // 3. 前の版
     if let Some(p) = prev_path {
         let prev = std::fs::read(p)?;
@@ -214,18 +213,48 @@ pub fn run(font_path: &Path, prev_path: Option<&Path>, woff2_ttf: Option<&Path>)
     }
 
     // 4. woff2 (解くのは道具の外。CI が woff2_decompress で解いたものを渡す)
-    if let Some(p) = woff2_ttf {
+    // 基本のファイルと JIS X 0213 で足された漢字のファイル (この順)。2 つで ttf と同じ字になる
+    let mut seen: BTreeSet<u32> = BTreeSet::new();
+    let mut sequences = BTreeSet::new();
+    for (k, p) in woff2_ttf.iter().enumerate() {
         let back = std::fs::read(p)?;
-        let d = differing(&data, &back, &cps, &[Mode::Unhinted, Mode::Interpreter])?;
+        let part = FontRef::new(&back)?;
+        let part_cmap: BTreeMap<u32, GlyphId> = part.charmap().mappings().collect();
+        let part_cps: Vec<u32> = part_cmap.keys().copied().collect();
+        let twice: BTreeSet<u32> = part_cps.iter().filter(|c| seen.contains(c)).copied().collect();
+        if !twice.is_empty() {
+            errors.push(format!("woff2 の 2 つのファイルに同じ字 {}: {}", twice.len(), label(&twice)));
+        }
+        seen.extend(part_cps.iter().copied());
+        if k == 1 {
+            // 分け方は build が書いた一覧のとおり
+            let want: BTreeSet<u32> = read_codepoints(&format!("build/{}.txt", crate::EXTRA))?.into_iter().collect();
+            let got: BTreeSet<u32> = part_cps.iter().copied().collect();
+            if want != got {
+                let d: BTreeSet<u32> = want.symmetric_difference(&got).copied().collect();
+                errors.push(format!("{}.woff2 の字が一覧と違う {}: {}", crate::EXTRA, d.len(), label(&d)));
+            }
+        }
+        let d = differing(&data, &back, &part_cps, &[Mode::Unhinted, Mode::Interpreter])?;
         if !d.is_empty() {
             errors.push(format!("woff2 を解くと違う字 {}: {}", d.len(), label(&d)));
         }
-        println!("woff2: 解いて {} 字を比べて違い {}", cps.len(), d.len());
-        let gpos = |d: &[u8]| -> Result<Option<Vec<u8>>> {
-            Ok(FontRef::new(d)?.table_data(skrifa::Tag::new(b"GPOS")).map(|t| t.as_bytes().to_vec()))
-        };
-        if gpos(&data)? != gpos(&back)? {
-            errors.push("woff2 を解くと GPOS が違う".into());
+        println!("woff2 ({}): 解いて {} 字を比べて違い {}", p.display(), part_cps.len(), d.len());
+        // palt は基本のファイルで引ける (詰める字は全部そちら)
+        if k == 0 {
+            check_palt(&part, &part_cmap, &mut errors)?;
+        }
+        sequences.extend(crate::ccmp::read(&part)?.into_keys());
+    }
+    if !woff2_ttf.is_empty() {
+        let lack: BTreeSet<u32> = have.difference(&seen).copied().collect();
+        if !lack.is_empty() {
+            errors.push(format!("woff2 のどちらにも無い字 {}: {}", lack.len(), label(&lack)));
+        }
+        // ccmp は並びの字と同じファイルの中で組める
+        let want: BTreeSet<Vec<u32>> = crate::ccmp::read(&font)?.into_keys().collect();
+        if sequences != want {
+            errors.push(format!("woff2 で組めない並びがある (ttf は {}、woff2 は {})", want.len(), sequences.len()));
         }
     }
 

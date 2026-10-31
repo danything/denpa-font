@@ -73,7 +73,7 @@ jobs:
         # 字ごとにランナーの CPU の数だけ並べて作る
         run: |
           tools/target/release/denpa-font build "$VERSION"
-          (cd dist && sha256sum denpa-font.ttf denpa-font.woff2 > SHA256SUMS && cat SHA256SUMS)
+          (cd dist && sha256sum denpa-font.ttf denpa-font.woff2 denpa-font-jisx0213.woff2 denpa-font-jisx0213.txt > SHA256SUMS && cat SHA256SUMS)
 
       - name: Previous release
         env:
@@ -100,8 +100,8 @@ jobs:
           again=$!
           # woff2 は Google の woff2_decompress で解いて ttf と比べる
           sudo apt-get install -y -qq woff2 > /dev/null
-          cp dist/denpa-font.woff2 build/check.woff2 && woff2_decompress build/check.woff2
-          tools/target/release/denpa-font verify dist/denpa-font.ttf ${PREV:+--prev prev.ttf} --woff2 build/check.ttf | tee verify.txt
+          for f in denpa-font denpa-font-jisx0213; do cp "dist/$f.woff2" "build/check-$f.woff2" && woff2_decompress "build/check-$f.woff2"; done
+          tools/target/release/denpa-font verify dist/denpa-font.ttf ${PREV:+--prev prev.ttf} --woff2 build/check-denpa-font.ttf --woff2 build/check-denpa-font-jisx0213.ttf | tee verify.txt
           wait "$again" || { cat build/again.log; exit 1; }
           (cd build/again/dist && sha256sum -c ../../../dist/SHA256SUMS)
           {
@@ -148,5 +148,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
-            dist/denpa-font.ttf dist/denpa-font.woff2 dist/SHA256SUMS \
+            dist/denpa-font.ttf dist/denpa-font.woff2 dist/denpa-font-jisx0213.woff2 dist/denpa-font-jisx0213.txt dist/SHA256SUMS \
             --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
