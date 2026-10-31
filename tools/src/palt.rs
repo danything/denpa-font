@@ -24,7 +24,7 @@ pub const SIDE: i32 = 80;
 /// 詰めたあとの送り幅の下限 (em の 5/16。ｉ ． ： ｜ のような細い字が詰まり過ぎないように)
 pub const MIN_ADVANCE: i32 = 320;
 /// palt を引ける用字系 (タグの順)。用字系の無い記号は前後の字の用字系になるので、和文の中でも効くようにする
-const SCRIPTS: [&[u8; 4]; 4] = [b"DFLT", b"hani", b"kana", b"latn"];
+pub const SCRIPTS: [&[u8; 4]; 4] = [b"DFLT", b"hani", b"kana", b"latn"];
 
 /// 1 字の詰め (xPlacement, xAdvance)。墨は新しい送り幅の真ん中に置く。
 /// 詰めない (詰めても全角に届く・墨が無い・全角でない) なら None

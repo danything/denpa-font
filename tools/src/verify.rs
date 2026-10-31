@@ -8,7 +8,7 @@
 //! 3. 前の版と比べて描き方が変わった字: ヒンティング無し・フォント自身のヒンティング (TrueType の命令)・
 //!    自動ヒンティング (FreeType の light 相当) で描いた輪郭 (24・36px) と送り幅で比べ、
 //!    一覧を出し、前と今の字形を並べた見本 (build/changes.svg) を書く (止めない)
-//! 4. woff2 を解いたもの (CI が woff2_decompress で解く) が ttf と同じ字・同じ GPOS になること
+//! 4. woff2 を解いたもの (CI が woff2_decompress で解く) が ttf と同じ字・同じ GPOS・GSUB になること
 //! 5. palt: 全角の英数字と記号 (U+FF01–FF5E) だけを墨の幅から決めた量で詰め、どの用字系からも引けること。
 //!    その字の既定の送り幅は全角 1024 (半角の同じ字は 512) のまま
 
@@ -221,11 +221,13 @@ pub fn run(font_path: &Path, prev_path: Option<&Path>, woff2_ttf: Option<&Path>)
             errors.push(format!("woff2 を解くと違う字 {}: {}", d.len(), label(&d)));
         }
         println!("woff2: 解いて {} 字を比べて違い {}", cps.len(), d.len());
-        let gpos = |d: &[u8]| -> Result<Option<Vec<u8>>> {
-            Ok(FontRef::new(d)?.table_data(skrifa::Tag::new(b"GPOS")).map(|t| t.as_bytes().to_vec()))
-        };
-        if gpos(&data)? != gpos(&back)? {
-            errors.push("woff2 を解くと GPOS が違う".into());
+        for tag in [b"GPOS", b"GSUB"] {
+            let table = |d: &[u8]| -> Result<Option<Vec<u8>>> {
+                Ok(FontRef::new(d)?.table_data(skrifa::Tag::new(tag)).map(|t| t.as_bytes().to_vec()))
+            };
+            if table(&data)? != table(&back)? {
+                errors.push(format!("woff2 を解くと {} が違う", String::from_utf8_lossy(tag)));
+            }
         }
     }
 

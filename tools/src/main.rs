@@ -6,6 +6,7 @@
 //!
 //! 並べて作るスレッドの数は DENPA_THREADS (無ければ CPU の数)。書き出す先は DENPA_OUT (無ければここ。build/ と dist/)。
 
+mod ccmp;
 mod draw;
 mod err;
 mod fillet;
@@ -119,8 +120,10 @@ impl OutlinePen for Pen {
     }
 }
 
-/// 元のフォントの字を em 1024 にして読む (.notdef と、Unicode の割り当てのある字)
-fn read_base(font: &FontRef) -> Result<((Vec<Contour>, u16), Base)> {
+/// 元のフォントの字を em 1024 にして読む (.notdef と、Unicode の割り当てのある字)。
+/// 3 つめは、ほかに読む字 (extra。ccmp の合字) の輪郭と送り幅
+#[allow(clippy::type_complexity)]
+fn read_base(font: &FontRef, extra: &[GlyphId]) -> Result<((Vec<Contour>, u16), Base, Vec<(Vec<Contour>, u16)>)> {
     let upm = font.head()?.units_per_em() as f32;
     let size = Size::new(UPM as f32);
     let outlines = font.outline_glyphs();
@@ -144,7 +147,8 @@ fn read_base(font: &FontRef) -> Result<((Vec<Contour>, u16), Base)> {
     for (c, gid) in font.charmap().mappings() {
         base.insert(c, get(gid)?);
     }
-    Ok((notdef, base))
+    let extra = extra.iter().map(|&g| get(g)).collect::<Result<Vec<_>>>()?;
+    Ok((notdef, base, extra))
 }
 
 fn build(version: &str) -> Result<()> {
@@ -157,7 +161,11 @@ fn build(version: &str) -> Result<()> {
     if font.head()?.units_per_em() != 2 * UPM {
         bail!("{BIZ} の em が 2048 でない (半分にして 1024 にする前提)");
     }
-    let (notdef, base) = read_base(&font)?;
+    // 2つ以上のコードポイントで 1 字の字は、元のフォントの ccmp の合字から作る
+    let ligature_src = ccmp::read(&font)?;
+    let ligature_gids: Vec<GlyphId> = ligature_src.values().copied().collect();
+    let (notdef, base, ligature_shapes) = read_base(&font, &ligature_gids)?;
+    let ligature_shapes: BTreeMap<&Vec<u32>, &(Vec<Contour>, u16)> = ligature_src.keys().zip(&ligature_shapes).collect();
     let mut repertoire = repertoire::load(src)?;
     let parts = parts::load("data/parts.txt")?;
     // 試すとき: DENPA_ONLY に書いた字だけ作る (parts.txt にあれば、denpa の表にまだ無い字も)
@@ -241,6 +249,19 @@ fn build(version: &str) -> Result<()> {
             None => {}
         }
     }
+    // 2つ以上のコードポイントで 1 字の字 (並びの字が全部入っているものだけ。DENPA_ONLY で試すときに欠ける)
+    let mut ligatures: Vec<(Vec<u32>, u32)> = vec![];
+    for seq in &repertoire.sequences {
+        if !seq.iter().all(|c| cmap.contains_key(c)) {
+            continue;
+        }
+        let text: String = seq.iter().map(|&c| ch(c)).collect();
+        let Some((s, adv)) = ligature_shapes.get(seq) else { bail!("BIZ UDゴシックの ccmp に {text} の合字がありません") };
+        ligatures.push((seq.clone(), jobs.len() as u32));
+        jobs.push((if s.is_empty() { Job::Keep(s.clone()) } else { Job::Fillet(s.clone()) }, *adv));
+        let hex: Vec<String> = seq.iter().map(|c| format!("U+{c:04X}")).collect();
+        writeln!(report, "ccmp    {}  # {text}", hex.join(" "))?;
+    }
     for c in missing {
         writeln!(report, "# missing U+{c:04X} {}", ch(c))?;
     }
@@ -294,7 +315,7 @@ fn build(version: &str) -> Result<()> {
     let glyphs = Glyphs { data: data_out, advance: jobs.iter().map(|j| j.1).collect(), lsb };
     eprintln!("{} 字を {:.1} 秒で作った ({threads} スレッド)", glyphs.len(), t0.elapsed().as_secs_f64());
 
-    let ttf = tables(&font, &glyphs, &cmap, major, minor, epoch)?;
+    let ttf = tables(&font, &glyphs, &cmap, &ligatures, major, minor, epoch)?;
     fs::create_dir_all(out.join("dist"))?;
     fs::write(out.join("dist/denpa-font.ttf"), &ttf)?;
     let woff2 = ttf2woff2::encode(&ttf, ttf2woff2::BrotliQuality::from(11u8)).map_err(|e| format!("woff2: {e}"))?;
@@ -304,14 +325,18 @@ fn build(version: &str) -> Result<()> {
 }
 
 /// 表を組む。元の表から運ぶのは OS/2・post・head・hhea の値だけ (em を半分にした分を直す)。
-/// ヒンティングは持たない (fpgm・prep・cvt・gasp を作らない)。縦書きの表と GSUB は持たない。
-/// GPOS は palt (全角の英数字と記号を詰める) だけ (palt.rs)
-fn tables(base: &FontRef, glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>, major: u16, minor: u16, epoch: i64) -> Result<Vec<u8>> {
+/// ヒンティングは持たない (fpgm・prep・cvt・gasp を作らない)。縦書きの表は持たない。
+/// GPOS は palt (全角の英数字と記号を詰める) だけ (palt.rs)、GSUB は ccmp (2つ以上のコードポイントで 1 字の字を組む) だけ (ccmp.rs)
+#[allow(clippy::too_many_arguments)]
+fn tables(base: &FontRef, glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>, ligatures: &[(Vec<u32>, u32)], major: u16, minor: u16, epoch: i64) -> Result<Vec<u8>> {
     let half = |v: i16| ((v as f64) / 2.0).round() as i16;
     let mut b = write_fonts::FontBuilder::new();
     let gpos = palt::gpos(glyphs, cmap)?;
     if let Some(g) = &gpos {
         b.add_table(g)?;
+    }
+    if let Some(g) = ccmp::gsub(cmap, ligatures)? {
+        b.add_table(&g)?;
     }
     let (glyf, loca, hmtx) = glyphs.tables();
     b.add_raw(Tag::new(b"glyf"), glyf);
@@ -391,7 +416,9 @@ fn tables(base: &FontRef, glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>, major: u16
     let (first, last) = (cmap.keys().next().copied().unwrap_or(0), cmap.keys().last().copied().unwrap_or(0));
     put_u16(&mut os2, 64, first.min(0xFFFF) as u16);
     put_u16(&mut os2, 66, last.min(0xFFFF) as u16);
-    put_u16(&mut os2, 94, u16::from(gpos.is_some())); // usMaxContext (palt は 1 字ずつ)
+    // usMaxContext (palt は 1 字ずつ、ccmp は並びの長さ)
+    let context = ligatures.iter().map(|(s, _)| s.len() as u16).max().unwrap_or(0).max(u16::from(gpos.is_some()));
+    put_u16(&mut os2, 94, context);
     b.add_raw(Tag::new(b"OS/2"), os2);
 
     let mut post = sfnt::table(base, b"post")?[..32].to_vec();

@@ -23,7 +23,7 @@ DENPA_ONLY='永あ①' tools/target/release/denpa-font build 3.0   # 書いた�
 - denpa の表の字が全部ある ([missing.txt](../missing.txt) の字を除く。いまは空)、空白のほかに形の無い字が無い、送り幅が 512 か 1024
 - 名前・em
 - palt: 全角の英数字と記号 (U+FF01–FF5E) だけを墨の幅から決めた量で詰め、どの用字系からも引ける。その字の既定の送り幅は全角 1024 (半角の同じ字は 512) のまま
-- woff2 を解いたものが ttf と同じ字・同じ GPOS になる
+- woff2 を解いたものが ttf と同じ字・同じ GPOS・GSUB になる
 - 前の版から描き方が変わった字の一覧と、前と今を並べた見本 (`build/changes.svg`) を出す。**止めない** (変わってよいかは PR を見る人が決める)
 
 ## CI ([build.yml](../.github/workflows/build.yml))

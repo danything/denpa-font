@@ -1,10 +1,10 @@
 # Denpa Font
 
-放送の字幕・データ放送・番組表の字 (JIS X 0208 と ARIB の外字など) を収めた、等幅の丸ゴシックです。
+放送の字幕・データ放送・番組表の字 (JIS X 0213 の1面・2面と ARIB の外字など) を収めた、等幅の丸ゴシックです。
 BIZ UDゴシック (モリサワ) の角を機械で丸め、元に無い ARIB の記号などは BIZ UDゴシックの部品で描き足しています。
 
 - ファミリ名 `Denpa Font` (PostScript 名 `DenpaFont-Regular`)、em 1024、送り幅は半角 512・全角 1024 だけ
-- 収める字は [danything/denpa](https://github.com/danything/denpa) の表から決め、全部入っています (v3.0 で 7,755 字)。縦書き・ヒンティングは持ちません。全角の英数字を詰める palt を持ちます ([docs/design.md](docs/design.md#palt-全角の英数字を詰める))
+- 収める字は [danything/denpa](https://github.com/danything/denpa) の表から決め、全部入っています (v3.6 で 11,709 字)。縦書き・ヒンティングは持ちません。全角の英数字を詰める palt と、か゚ のような2つのコードポイントの字を1字に組む ccmp を持ちます ([docs/design.md](docs/design.md#palt-全角の英数字を詰める))
 
 ## 入手
 

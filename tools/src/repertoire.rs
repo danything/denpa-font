@@ -2,17 +2,18 @@
 //! 表は fetch.sh が build/src に取ってくる (denpa の版は fetch.sh の DENPA_COMMIT)。ここは読むだけ。
 //!
 //! 読む表 (build/src/denpa/):
-//!   - b24-tables.ts      字幕の文字の表 (かな・英数・半角記号・JIS の差分・追加記号・DRCS の置き換え先)
+//!   - b24-tables.ts      字幕と番組表の文字の表 (かな・英数・半角記号・JIS の差分・追加記号・DRCS の置き換え先・JIS X 0213 の2つのコードポイントの字・1面の 85〜94区・2面)
 //!   - aribtext-gaiji.ts  番組表などの ARIB 外字 (GAIJI。番組表だけで違える EPG_ONLY)
 //!   - fold.ts            検索の寄せの表 (FOLD。寄せた先の字)
 //!   - ../index-jis0208.txt      EUC-JP の表 (WHATWG。ブラウザの TextDecoder('euc-jp') と同じ字)
 //! 表はいずれ 1 つのファイルにまとまるので、表の名前 (HIRAGANA・GAIJI など) をどのファイルからでも探す。
 //!
-//! 入れるもの: データ放送 (ASCII と、EUC-JP の 1〜84 区。13 区は除く)、字幕 (JIS X 0208 の割り当てのある
-//! 区点と外字の 85・86・90〜94 区、かな・英数・記号)、DRCS の置き換え先、外字の表と寄せた先の字。
+//! 入れるもの: データ放送 (ASCII と、EUC-JP の 1〜84 区)、字幕と番組表 (1〜84 区は EUC-JP と JIS の差分で、
+//! JIS X 0213 の1面と同じ字。外字の 85・86・90〜94 区、JIS X 0213 の1面の 85〜94 区と2面、かな・英数・記号)、
+//! DRCS の置き換え先、外字の表と寄せた先の字。
 //! データ放送は denpa のエンジン (src/lib/bml/euc.ts) が 1〜84 区を TextDecoder('euc-jp') で読み、
 //! 85 区から先は字幕と同じ追加記号 (ADDITIONAL) に開く。
-//! 13 区は WHATWG の EUC-JP では NEC 特殊文字だが、ARIB の放送は使わない (同じ字は追加記号にある)。
+//! 2つのコードポイントで 1 字の字 (か゚ など。KANJI_SEQUENCES) は、元の字を入れたうえで 1 字に組む (sequences。GSUB の ccmp)。
 //! 追加記号に私用領域の字があれば (92区56〜85点の楽器の略記)、同じ区点の外字の表の字へつなぐ (pua)。
 //!
 //! TS・JS は実行せず、表のリテラル (文字列・数・配列、// と /* */ の注釈) だけを読む。
@@ -33,6 +34,8 @@ pub enum Pua {
 pub struct Repertoire {
     pub codepoints: BTreeSet<u32>,
     pub pua: BTreeMap<u32, Pua>,
+    /// 2つ以上のコードポイントで 1 字の字 (JIS X 0213 の か゚・æ̀・˩˥ など)。並びのコードポイントは codepoints にもある
+    pub sequences: BTreeSet<Vec<u32>>,
 }
 
 // ---------------------------------------------------------------- JS のリテラルの読み手
@@ -211,13 +214,13 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
     if src.is_empty() {
         bail!("{} に denpa の表がありません (先に fetch.sh)", denpa.display());
     }
-    // JIS X 0208 の割り当てのある区点 (0 始まり) と字: EUC-JP の 1〜84 区。13 区 (NEC 特殊文字) は除く
+    // EUC-JP の 1〜84 区の区点 (0 始まり) と字 (13 区は NEC 特殊文字。JIS X 0213 の1面もほぼ同じ字)
     let mut jis0208: BTreeMap<usize, u32> = BTreeMap::new();
     for line in std::fs::read_to_string(dir.join("index-jis0208.txt")).ctx(|| "index-jis0208.txt (先に fetch.sh)".into())?.lines() {
         let mut f = line.split('\t');
         if let (Some(p), Some(c)) = (f.next(), f.next()) {
             if let (Ok(p), Some(c)) = (p.trim().parse::<usize>(), num(c)) {
-                if p < 84 * 94 && p / 94 != 12 {
+                if p < 84 * 94 {
                     jis0208.entry(p).or_insert(c as u32);
                 }
             }
@@ -232,7 +235,7 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
     out.extend(jis0208.values().copied().filter(|&c| !bad(c)));
 
     // 字幕
-    for name in ["HIRAGANA", "KATAKANA", "KANA_SYMBOLS_HALF", "JISX0201", "JISX0201_HALF", "ALNUM_FULL", "ALNUM_HALF", "KANJI_SYMBOLS_HALF", "ADDITIONAL"] {
+    for name in ["HIRAGANA", "KATAKANA", "KANA_SYMBOLS_HALF", "JISX0201", "JISX0201_HALF", "ALNUM_FULL", "ALNUM_HALF", "KANJI_SYMBOLS_HALF", "ADDITIONAL", "PLANE1_HIGH"] {
         let v = need(&src, name)?;
         out.extend(as_str(&v).ctx(|| format!("{name} が文字列でない"))?.chars().map(|c| c as u32).filter(|&c| !bad(c)));
     }
@@ -246,29 +249,32 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
             diff.insert(*start as usize + k, ch as u32);
         }
     }
-    let gaiji_row = |ku: usize| ku == 84 || ku == 85 || (89..=93).contains(&ku); // 0 始まり: 85・86・90〜94 区
-    // 字幕で区点 i が出す字: JIS の差分 → 追加記号 (85区から) → EUC-JP
-    let caption = |i: usize| -> u32 {
-        if let Some(&c) = diff.get(&i) {
-            return c;
-        }
-        if i >= 84 * 94 {
-            if let Some(&c) = additional.get(i - 84 * 94) {
-                return c;
-            }
-        }
-        jis0208.get(&i).copied().unwrap_or(0xFFFD)
-    };
-    for i in 0..94 * 94 {
-        if !jis0208.contains_key(&i) && !gaiji_row(i / 94) {
-            continue; // 割り当てのない区点は入れない
-        }
-        let c = caption(i);
+    // 字幕で 1〜84 区の区点 i が出す字: JIS の差分 → EUC-JP (85 区から先は ADDITIONAL・PLANE1_HIGH で入れた)
+    for i in 0..84 * 94 {
+        let c = diff.get(&i).or(jis0208.get(&i)).copied().unwrap_or(0xFFFD);
         if !bad(c) {
             out.insert(c);
         }
     }
     out.insert(0x3000);
+    // JIS X 0213 の2面 ([区, 94 字])
+    let Val::Arr(plane2) = need(&src, "PLANE2")? else { bail!("PLANE2 が配列でない") };
+    for row in &plane2 {
+        let Val::Arr(kv) = row else { bail!("PLANE2 の組が読めません") };
+        let Some(Val::Str(chars)) = kv.get(1) else { bail!("PLANE2 の組が読めません") };
+        out.extend(chars.chars().map(|c| c as u32).filter(|&c| !bad(c)));
+    }
+    // 2つのコードポイントで 1 字の字 ([区点, 字])。元の字も入れる
+    let mut sequences = BTreeSet::new();
+    for (_, v) in pairs(&need(&src, "KANJI_SEQUENCES")?) {
+        let Val::Str(s) = v else { bail!("KANJI_SEQUENCES の字が文字列でない") };
+        let seq: Vec<u32> = s.chars().map(|c| c as u32).collect();
+        if seq.len() < 2 {
+            bail!("KANJI_SEQUENCES の {s} が 1 字");
+        }
+        out.extend(seq.iter().copied());
+        sequences.insert(seq);
+    }
 
     // DRCS の置き換え先
     for (_, v) in pairs(&need(&src, "DRCS_REPLACE")?) {
@@ -316,7 +322,7 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
         };
         pua.insert(p, target);
     }
-    Ok(Repertoire { codepoints: out, pua })
+    Ok(Repertoire { codepoints: out, pua, sequences })
 }
 
 /// 一覧を書き出す (見るため。ビルドは load を直に使う)
@@ -329,7 +335,12 @@ pub fn run(dir: &Path) -> Result<()> {
             None => println!("U+{c:04X}"),
         }
     }
-    eprintln!("{} code points", r.codepoints.len());
+    for s in &r.sequences {
+        let hex: Vec<String> = s.iter().map(|c| format!("U+{c:04X}")).collect();
+        let text: String = s.iter().filter_map(|&c| char::from_u32(c)).collect();
+        println!("{}  # 1 字に組む {text}", hex.join(" "));
+    }
+    eprintln!("{} code points, {} sequences", r.codepoints.len(), r.sequences.len());
     Ok(())
 }
 
