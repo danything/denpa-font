@@ -14,6 +14,7 @@
 //! データ放送は denpa のエンジン (src/lib/bml/euc.ts) が 1〜84 区を TextDecoder('euc-jp') で読み、
 //! 85 区から先は字幕と同じ追加記号 (ADDITIONAL) に開く。
 //! 2つのコードポイントで 1 字の字 (か゚ など。KANJI_SEQUENCES) は、元の字を入れたうえで 1 字に組む (sequences。GSUB の ccmp)。
+//! web フォントは JIS X 0213 にだけある字 (extra) を別のファイルに分ける (docs/repertoire.md)。
 //! 追加記号に私用領域の字があれば (92区56〜85点の楽器の略記)、同じ区点の外字の表の字へつなぐ (pua)。
 //!
 //! TS・JS は実行せず、表のリテラル (文字列・数・配列、// と /* */ の注釈) だけを読む。
@@ -36,6 +37,8 @@ pub struct Repertoire {
     pub pua: BTreeMap<u32, Pua>,
     /// 2つ以上のコードポイントで 1 字の字 (JIS X 0213 の か゚・æ̀・˩˥ など)。並びのコードポイントは codepoints にもある
     pub sequences: BTreeSet<Vec<u32>>,
+    /// web フォントで別のファイルに分ける字 (JIS X 0213 にだけある字)。codepoints にもある。ほかの字は基本のファイル
+    pub extra: BTreeSet<u32>,
 }
 
 // ---------------------------------------------------------------- JS のリテラルの読み手
@@ -228,17 +231,21 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
     }
 
     let bad = |c: u32| c == 0xFFFD || c < 0x20;
+    // out: web フォントの基本のファイルに入れる字。x0213: JIS X 0213 にだけある字 (web フォントでは別のファイル。下の extra)
     let mut out = BTreeSet::new();
+    let mut x0213 = BTreeSet::new();
 
     // データ放送: ASCII と EUC-JP の 1〜84 区 (85 区から先は字幕と同じ追加記号)
     out.extend(0x20..0x7F);
     out.extend(jis0208.values().copied().filter(|&c| !bad(c)));
 
-    // 字幕
-    for name in ["HIRAGANA", "KATAKANA", "KANA_SYMBOLS_HALF", "JISX0201", "JISX0201_HALF", "ALNUM_FULL", "ALNUM_HALF", "KANJI_SYMBOLS_HALF", "ADDITIONAL", "PLANE1_HIGH"] {
+    // 字幕と番組表
+    for name in ["HIRAGANA", "KATAKANA", "KANA_SYMBOLS_HALF", "JISX0201", "JISX0201_HALF", "ALNUM_FULL", "ALNUM_HALF", "KANJI_SYMBOLS_HALF", "ADDITIONAL"] {
         let v = need(&src, name)?;
         out.extend(as_str(&v).ctx(|| format!("{name} が文字列でない"))?.chars().map(|c| c as u32).filter(|&c| !bad(c)));
     }
+    // JIS X 0213 の1面の 85〜94 区
+    x0213.extend(as_str(&need(&src, "PLANE1_HIGH")?).ctx(|| "PLANE1_HIGH が文字列でない".into())?.chars().map(|c| c as u32).filter(|&c| !bad(c)));
     let additional: Vec<u32> = as_str(&need(&src, "ADDITIONAL")?).unwrap_or_default().chars().map(|c| c as u32).collect();
     let mut diff: BTreeMap<usize, u32> = BTreeMap::new();
     let Val::Arr(kd) = need(&src, "KANJI_DIFF")? else { bail!("KANJI_DIFF が配列でない") };
@@ -249,11 +256,17 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
             diff.insert(*start as usize + k, ch as u32);
         }
     }
-    // 字幕で 1〜84 区の区点 i が出す字: JIS の差分 → EUC-JP (85 区から先は ADDITIONAL・PLANE1_HIGH で入れた)
+    // 字幕で 1〜84 区の区点 i が出す字: JIS の差分 → EUC-JP (85 区から先は ADDITIONAL・PLANE1_HIGH で入れた)。
+    // JIS X 0208 に字のある区点 (13 区を除く) は基本のファイル、ほか (JIS X 0213 で足された点) は別のファイル
     for i in 0..84 * 94 {
         let c = diff.get(&i).or(jis0208.get(&i)).copied().unwrap_or(0xFFFD);
-        if !bad(c) {
+        if bad(c) {
+            continue;
+        }
+        if jis0208.contains_key(&i) && i / 94 != 12 {
             out.insert(c);
+        } else {
+            x0213.insert(c);
         }
     }
     out.insert(0x3000);
@@ -262,9 +275,10 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
     for row in &plane2 {
         let Val::Arr(kv) = row else { bail!("PLANE2 の組が読めません") };
         let Some(Val::Str(chars)) = kv.get(1) else { bail!("PLANE2 の組が読めません") };
-        out.extend(chars.chars().map(|c| c as u32).filter(|&c| !bad(c)));
+        x0213.extend(chars.chars().map(|c| c as u32).filter(|&c| !bad(c)));
     }
-    // 2つのコードポイントで 1 字の字 ([区点, 字])。元の字も入れる
+    // 2つのコードポイントで 1 字の字 ([区点, 字])。元の字も入れる。ccmp はフォントの中でしか組めないので、
+    // 元の字・組んだ字・ccmp は基本のファイル (web フォントで、並びの字が別々のファイルに分かれないように)
     let mut sequences = BTreeSet::new();
     for (_, v) in pairs(&need(&src, "KANJI_SEQUENCES")?) {
         let Val::Str(s) = v else { bail!("KANJI_SEQUENCES の字が文字列でない") };
@@ -322,7 +336,9 @@ pub fn load(dir: &Path) -> Result<Repertoire> {
         };
         pua.insert(p, target);
     }
-    Ok(Repertoire { codepoints: out, pua, sequences })
+    let extra: BTreeSet<u32> = x0213.difference(&out).copied().collect();
+    out.extend(extra.iter().copied());
+    Ok(Repertoire { codepoints: out, pua, sequences, extra })
 }
 
 /// 一覧を書き出す (見るため。ビルドは load を直に使う)

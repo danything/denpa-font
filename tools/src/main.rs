@@ -1,7 +1,7 @@
 //! Denpa Font を作る道具。リポジトリの根で動かす:
 //!
-//!   cargo run --release --manifest-path tools/Cargo.toml -- build 3.0     元から作る (dist/。build/ に途中のもの)
-//!   cargo run ... -- verify dist/denpa-font.ttf [--prev ttf] [--woff2 ttf]   確かめる
+//!   cargo run --release --manifest-path tools/Cargo.toml -- build 3.0     元から作る (dist/ に ttf と woff2 の 2 つ。build/ に途中のもの)
+//!   cargo run ... -- verify dist/denpa-font.ttf [--prev ttf] [--woff2 基本 ttf --woff2 JIS X 0213 ttf]   確かめる
 //!   cargo run ... -- repertoire                                           収める字の一覧を見る
 //!
 //! 並べて作るスレッドの数は DENPA_THREADS (無ければ CPU の数)。書き出す先は DENPA_OUT (無ければここ。build/ と dist/)。
@@ -58,15 +58,16 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("build") => build(args.get(1).map_or("0.0", String::as_str)),
         Some("verify") => {
-            // verify <ttf> [--prev 前の版の ttf] [--woff2 woff2 を解いた ttf]
+            // verify <ttf> [--prev 前の版の ttf] [--woff2 基本の woff2 を解いた ttf --woff2 JIS X 0213 の woff2 を解いた ttf]
             let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(Path::new);
             if args.len() < 2 {
-                bail!("verify <ttf> [--prev ttf] [--woff2 ttf]");
+                bail!("verify <ttf> [--prev ttf] [--woff2 ttf --woff2 ttf]");
             }
-            verify::run(Path::new(&args[1]), opt("--prev"), opt("--woff2"))
+            let woff2: Vec<&Path> = args.windows(2).filter(|w| w[0] == "--woff2").map(|w| Path::new(&w[1])).collect();
+            verify::run(Path::new(&args[1]), opt("--prev"), &woff2)
         }
         Some("repertoire") => repertoire::run(Path::new(SRC)),
-        _ => bail!("build <版> | verify <ttf> [--prev ttf] [--woff2 ttf] | repertoire (先に fetch.sh)"),
+        _ => bail!("build <版> | verify <ttf> [--prev ttf] [--woff2 ttf --woff2 ttf] | repertoire (先に fetch.sh)"),
     }
 }
 
@@ -315,13 +316,62 @@ fn build(version: &str) -> Result<()> {
     let glyphs = Glyphs { data: data_out, advance: jobs.iter().map(|j| j.1).collect(), lsb };
     eprintln!("{} 字を {:.1} 秒で作った ({threads} スレッド)", glyphs.len(), t0.elapsed().as_secs_f64());
 
-    let ttf = tables(&font, &glyphs, &cmap, &ligatures, major, minor, epoch)?;
+    // ttf は全部の字で 1 つ。web フォント (woff2) は基本の字と、JIS X 0213 にだけある字 (repertoire.extra) の 2 つに分ける。
+    // ブラウザは unicode-range で、別のファイルの字が画面に出たときだけそちらを取りに行く
     fs::create_dir_all(out.join("dist"))?;
+    let ttf = tables(&font, &glyphs, &cmap, &ligatures, major, minor, epoch)?;
     fs::write(out.join("dist/denpa-font.ttf"), &ttf)?;
-    let woff2 = ttf2woff2::encode(&ttf, ttf2woff2::BrotliQuality::from(11u8)).map_err(|e| format!("woff2: {e}"))?;
-    fs::write(out.join("dist/denpa-font.woff2"), &woff2)?;
-    println!("{}/dist/denpa-font.ttf {} バイト、denpa-font.woff2 {} バイト", out.display(), ttf.len(), woff2.len());
+    println!("{}/dist/denpa-font.ttf {} バイト", out.display(), ttf.len());
+    for (name, extra) in [("denpa-font", false), (EXTRA, true)] {
+        let (g, cm, ligs) = subset(&glyphs, &cmap, &ligatures, |c| repertoire.extra.contains(&c) == extra);
+        let woff2 = ttf2woff2::encode(&tables(&font, &g, &cm, &ligs, major, minor, epoch)?, ttf2woff2::BrotliQuality::from(11u8))
+            .map_err(|e| format!("woff2: {e}"))?;
+        fs::write(out.join(format!("dist/{name}.woff2")), &woff2)?;
+        println!("{}/dist/{name}.woff2 {} 字・{} バイト", out.display(), cm.len(), woff2.len());
+        if extra {
+            // CSS の unicode-range に書く字の範囲と、verify が突き合わせる一覧
+            fs::write(out.join(format!("dist/{name}.txt")), format!("{}\n", unicode_range(cm.keys().copied())))?;
+            fs::write(out.join(format!("build/{name}.txt")), cm.keys().map(|c| format!("U+{c:04X}\n")).collect::<String>())?;
+        }
+    }
     Ok(())
+}
+
+/// JIS X 0213 にだけある字の web フォントのファイル名 (拡張子を除く)
+pub const EXTRA: &str = "denpa-font-jisx0213";
+
+/// keep が真の字だけのフォントの中身 (字の番号は詰め直す。.notdef は 0 のまま)。
+/// ccmp は並びの字が全部残るものだけ残す
+#[allow(clippy::type_complexity)]
+fn subset(glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>, ligatures: &[(Vec<u32>, u32)], keep: impl Fn(u32) -> bool) -> (Glyphs, BTreeMap<u32, u32>, Vec<(Vec<u32>, u32)>) {
+    let mut order: Vec<u32> = vec![0];
+    let mut renumber: BTreeMap<u32, u32> = BTreeMap::from([(0, 0)]);
+    let mut take = |g: u32| -> u32 {
+        *renumber.entry(g).or_insert_with(|| {
+            order.push(g);
+            (order.len() - 1) as u32
+        })
+    };
+    let cm: BTreeMap<u32, u32> = cmap.iter().filter(|&(&c, _)| keep(c)).map(|(&c, &g)| (c, take(g))).collect();
+    let ligs = ligatures.iter().filter(|(s, _)| s.iter().all(|c| cm.contains_key(c))).map(|(s, g)| (s.clone(), take(*g))).collect();
+    let g = Glyphs {
+        data: order.iter().map(|&g| glyphs.data[g as usize].clone()).collect(),
+        advance: order.iter().map(|&g| glyphs.advance[g as usize]).collect(),
+        lsb: order.iter().map(|&g| glyphs.lsb[g as usize]).collect(),
+    };
+    (g, cm, ligs)
+}
+
+/// CSS の unicode-range の値 (続いた字は U+XXXX-YYYY にまとめる)。字は小さい順
+pub fn unicode_range(cps: impl IntoIterator<Item = u32>) -> String {
+    let mut runs: Vec<(u32, u32)> = vec![];
+    for c in cps {
+        match runs.last_mut() {
+            Some(r) if r.1 + 1 == c => r.1 = c,
+            _ => runs.push((c, c)),
+        }
+    }
+    runs.iter().map(|&(a, b)| if a == b { format!("U+{a:X}") } else { format!("U+{a:X}-{b:X}") }).collect::<Vec<_>>().join(",")
 }
 
 /// 表を組む。元の表から運ぶのは OS/2・post・head・hhea の値だけ (em を半分にした分を直す)。
@@ -453,4 +503,31 @@ fn tables(base: &FontRef, glyphs: &Glyphs, cmap: &BTreeMap<u32, u32>, ligatures:
         .collect();
     b.add_table(&write_fonts::tables::name::Name::new(records))?;
     Ok(b.build())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unicode_range_joins_runs() {
+        assert_eq!(unicode_range([0x41, 0x42, 0x43, 0x45, 0x3000, 0x20089]), "U+41-43,U+45,U+3000,U+20089");
+        assert_eq!(unicode_range([]), "");
+    }
+
+    #[test]
+    fn subset_renumbers_and_keeps_whole_sequences() {
+        let g = |n: u16| Glyphs { data: vec![vec![]; n as usize], advance: (0..n).collect(), lsb: vec![0; n as usize] };
+        // 0: .notdef、1: か、2: U+309A、3: か゚、4: 擄 (別のファイル)
+        let cmap = BTreeMap::from([(0x304B, 1), (0x309A, 2), (0x64C4, 4)]);
+        let ligs = vec![(vec![0x304B, 0x309A], 3)];
+        let (base, cm, l) = subset(&g(5), &cmap, &ligs, |c| c != 0x64C4);
+        assert_eq!(cm, BTreeMap::from([(0x304B, 1), (0x309A, 2)]));
+        assert_eq!(l, vec![(vec![0x304B, 0x309A], 3)]);
+        assert_eq!(base.advance, vec![0, 1, 2, 3]);
+        let (other, cm, l) = subset(&g(5), &cmap, &ligs, |c| c == 0x64C4);
+        assert_eq!(cm, BTreeMap::from([(0x64C4, 1)]));
+        assert!(l.is_empty());
+        assert_eq!(other.advance, vec![0, 4]);
+    }
 }
