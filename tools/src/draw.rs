@@ -653,6 +653,24 @@ pub fn draw(c: u32, base: &Base) -> Result<Option<Shape>> {
                 s.extend(capsule((CX + sx * 260.0, y0 + 10.0), (CX + sx * 320.0, -20.0), LINE));
             }
         }
+        0x1F4FB => {
+            // 📻 ラジオ: 📺 と同じ太さの枠の横長の本体に、左に格子に並べた四角のスピーカー・右に丸い窓 (輪)、左上に電波の 2 本の弧
+            let (x0, x1, y0, y1) = (70.0, 954.0, 20.0, 540.0);
+            let cy = (y0 + y1) / 2.0;
+            s = frame(x0, y0, x1, y1, 90.0, LINE * 1.5);
+            let (cell, gap) = (80.0, 30.0);
+            for i in 0..3 {
+                for j in 0..3 {
+                    let x = 200.0 + i as f64 * (cell + gap);
+                    let y = cy - 1.5 * cell - gap + j as f64 * (cell + gap);
+                    s.extend(rrect(x, y, x + cell, y + cell, 14.0));
+                }
+            }
+            s.extend(ring(700.0, cy, 125.0, LINE));
+            for r in [110.0, 220.0] {
+                s.extend(arc(260.0, y1, r, 70.0, 150.0, LINE));
+            }
+        }
 
         _ => return Ok(None),
     }
